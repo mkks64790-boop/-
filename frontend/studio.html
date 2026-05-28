@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FeiShark Studio 修音室</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body data-page="studio">
+  <div class="ambient-bg" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark">FS</div>
+      <div>
+        <p class="eyebrow">FeiShark Studio</p>
+        <h1>修音室 Studio</h1>
+        <p class="subtitle">专注翻唱成品试听、波形预览、片段定位和基础后处理入口。训练与任务编排继续留在 Dashboard。</p>
+      </div>
+    </div>
+
+    <nav class="page-nav" aria-label="产品导航">
+      <a class="page-nav-link" href="/">Dashboard</a>
+      <a class="page-nav-link is-active" href="/studio">Studio</a>
+    </nav>
+
+    <div class="status-strip studio-status-strip">
+      <div class="status-chip" id="studioStatusChip">
+        <span class="dot warning" id="studioStatusDot"></span>
+        <span id="studioStatusText">等待载入成品资源</span>
+      </div>
+      <a class="ghost-btn" href="/">返回工作台</a>
+    </div>
+  </header>
+
+  <main class="studio-shell">
+    <section class="studio-main">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow accent">Studio · 成品预览</p>
+            <h2>翻唱结果试听与修音骨架</h2>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn" id="studioReloadBtn" type="button">重新载入</button>
+          </div>
+        </div>
+
+        <div class="studio-player-card">
+          <div class="studio-player-row">
+            <div>
+              <p class="studio-track-kicker" id="studioTrackKicker">等待选择 cover 成品</p>
+              <h3 class="studio-track-title" id="studioTrackTitle">请选择一个已完成的翻唱任务</h3>
+              <div class="studio-track-subline" id="studioTrackSubline">可从右侧资源列表选取，也可在 Dashboard 任务详情里点击“进入 Studio”。</div>
+            </div>
+            <div class="studio-player-actions">
+              <button class="primary-btn warm" id="studioPlayToggleBtn" type="button" disabled>播放</button>
+              <a class="ghost-btn is-disabled" id="studioDownloadBtn" href="#" target="_blank" aria-disabled="true">下载原始成品</a>
+            </div>
+          </div>
+
+          <div class="studio-meta-row">
+            <span id="studioCurrentFileName">当前文件：-</span>
+            <span id="studioCurrentDuration">时长：-</span>
+            <span class="mono" id="studioCurrentJobId">Job：-</span>
+          </div>
+
+          <audio id="studioAudio" class="studio-audio" controls preload="metadata"></audio>
+
+          <div class="studio-time-row">
+            <span id="studioCurrentTime">播放位置：00:00</span>
+            <span id="studioArtifactStage">产物阶段：-</span>
+            <span id="studioArtifactPath" class="mono">产物路径：-</span>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section-head">
+            <h4>波形 / 时间轴预留区</h4>
+          </div>
+          <div class="studio-wave-shell">
+            <canvas id="studioWaveCanvas" aria-label="波形预览骨架"></canvas>
+            <div class="studio-wave-note" id="studioWaveNote">当前先提供预览骨架，用于后续接入真实波形解析和片段编辑。</div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section-head">
+            <h4>基础后处理入口</h4>
+          </div>
+          <div class="studio-control-grid">
+            <article class="studio-control-card">
+              <div class="studio-control-head">
+                <strong>音量</strong>
+                <span class="studio-control-value" id="studioVolumeValue">100%</span>
+              </div>
+              <input id="studioVolume" type="range" min="0" max="100" value="100">
+              <div class="studio-control-help">这一项会影响当前试听音量，方便快速判断成品是否需要进一步处理。</div>
+            </article>
+
+            <article class="studio-control-card">
+              <div class="studio-control-head">
+                <strong>亮度 / 高频</strong>
+                <span class="studio-control-value" id="studioPresenceValue">0</span>
+              </div>
+              <input id="studioPresence" type="range" min="-6" max="6" value="0">
+              <div class="studio-control-help">本阶段先保留参数位，后续可接入真实高频塑形或 EQ 处理。</div>
+            </article>
+
+            <article class="studio-control-card">
+              <div class="studio-control-head">
+                <strong>厚度 / 低频</strong>
+                <span class="studio-control-value" id="studioWarmthValue">0</span>
+              </div>
+              <input id="studioWarmth" type="range" min="-6" max="6" value="0">
+              <div class="studio-control-help">用于预留低频厚度控制位，当前只记录本地预览参数状态。</div>
+            </article>
+
+            <article class="studio-control-card">
+              <div class="studio-control-head">
+                <strong>空间感 / 混响</strong>
+                <span class="studio-control-value" id="studioSpaceValue">15%</span>
+              </div>
+              <input id="studioSpace" type="range" min="0" max="100" value="15">
+              <div class="studio-control-help">保留空间感预览位，后续可以映射到 ffmpeg 或现有混音链导出参数。</div>
+            </article>
+
+            <article class="studio-control-card">
+              <div class="studio-control-head">
+                <strong>人声贴前程度</strong>
+                <span class="studio-control-value" id="studioForwardValue">0</span>
+              </div>
+              <input id="studioForward" type="range" min="-10" max="10" value="0">
+              <div class="studio-control-help">用于记录人声前后位置的主观调整意图，当前不直接写回原成品。</div>
+            </article>
+
+            <article class="studio-control-card">
+              <div class="studio-control-head">
+                <strong>导出响度模式</strong>
+                <span class="studio-control-value" id="studioLoudnessValue">Studio 平衡</span>
+              </div>
+              <select id="studioLoudnessMode">
+                <option value="balanced">Studio 平衡</option>
+                <option value="streaming">流媒体友好</option>
+                <option value="broadcast">更靠前输出</option>
+              </select>
+              <div class="studio-control-help">这一阶段只保留输出预设选项和状态，不直接触发新的渲染链路。</div>
+            </article>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section-head">
+            <h4>导出 / 版本</h4>
+          </div>
+          <div class="studio-export-grid">
+            <div class="studio-export-card">
+              <strong>当前版本</strong>
+              <div class="studio-inline-note" id="studioVersionNote">当前载入的是任务原始主产物 `final_master.wav`，后续修音版可在这里扩展版本管理。</div>
+            </div>
+            <div class="studio-version-card">
+              <strong>导出入口</strong>
+              <div class="studio-export-actions">
+                <a class="ghost-btn is-disabled" id="studioExportDraftBtn" href="#" aria-disabled="true">导出修音版（预留）</a>
+                <a class="ghost-btn is-disabled" id="studioOpenArtifactBtn" href="#" target="_blank" aria-disabled="true">打开产物目录（预留）</a>
+              </div>
+              <div class="studio-control-help">本阶段只打通成品加载与试听，不直接改写或生成新的音频版本。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="studio-side">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow accent">Studio · 成品资源</p>
+            <h2>选择一个已完成 cover job</h2>
+          </div>
+        </div>
+
+        <div class="studio-resource-card">
+          <div class="studio-resource-head">
+            <strong id="studioResourceCount">正在读取可试听资源...</strong>
+            <span class="studio-inline-note">只显示已完成的翻唱任务</span>
+          </div>
+
+          <label>
+            <span>快速选择</span>
+            <select id="studioResourceSelect">
+              <option value="">正在加载资源...</option>
+            </select>
+          </label>
+
+          <div class="studio-resource-list" id="studioResourceList">
+            <div class="studio-resource-empty">正在读取已完成的翻唱任务...</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow warm">Studio · 任务摘要</p>
+            <h2>当前成品上下文</h2>
+          </div>
+        </div>
+
+        <div class="studio-meta-grid" id="studioMetaGrid">
+          <div class="meta-card">
+            <div class="meta-label">当前状态</div>
+            <div class="meta-value">未载入</div>
+          </div>
+          <div class="meta-card">
+            <div class="meta-label">最终阶段</div>
+            <div class="meta-value">-</div>
+          </div>
+          <div class="meta-card">
+            <div class="meta-label">创建时间</div>
+            <div class="meta-value">-</div>
+          </div>
+          <div class="meta-card">
+            <div class="meta-label">工作目录</div>
+            <div class="meta-value mono">-</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow warm">Studio · 后续扩展位</p>
+            <h2>这一阶段保留的通路</h2>
+          </div>
+        </div>
+
+        <div class="studio-note-card">
+          <strong>当前已经打通</strong>
+          <div>1. 从 Dashboard 的已完成 cover job 进入 Studio。</div>
+          <div>2. 基于现有 `jobs + artifacts + download` 数据通路加载成品。</div>
+          <div>3. 本地试听、时长显示、波形骨架和后处理参数状态保留。</div>
+          <div style="margin-top: 10px;">下一阶段可以在不改任务编排的前提下，再接真实波形解析、WebAudio 预览或导出链。</div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <div id="toastRoot" class="toast-root"></div>
+  <script type="module" src="/static/js/studio.js"></script>
+</body>
+</html>

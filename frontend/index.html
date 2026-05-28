@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-mobile-tab="dashboard">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FeiShark Studio 工作台</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body data-mobile-tab="dashboard">
+  <div class="ambient-bg" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark">FS</div>
+      <div>
+        <p class="eyebrow">FeiShark Studio</p>
+        <h1>肥鲨工作台</h1>
+        <p class="subtitle">先看任务中心，再用创建入口发起新任务；右侧负责模型和诊断。</p>
+      </div>
+    </div>
+
+    <nav class="page-nav" aria-label="产品导航">
+      <a class="page-nav-link is-active" href="/">Dashboard</a>
+      <a class="page-nav-link" href="/studio">Studio</a>
+    </nav>
+
+    <div class="status-strip">
+      <div class="status-chip" id="engineChip">
+        <span class="dot warning"></span>
+        <span id="engineChipText">正在检测后端与 RVC 状态</span>
+      </div>
+      <div class="summary-chip"><span class="summary-label">排队中</span><strong id="summaryPending">0</strong></div>
+      <div class="summary-chip"><span class="summary-label">进行中</span><strong id="summaryProcessing">0</strong></div>
+      <div class="summary-chip"><span class="summary-label">失败</span><strong id="summaryFailed">0</strong></div>
+      <div class="summary-chip"><span class="summary-label">完成</span><strong id="summaryCompleted">0</strong></div>
+    </div>
+  </header>
+
+  <nav class="mobile-tabbar" aria-label="工作区切换">
+    <button type="button" class="mobile-tab-btn is-active" data-mobile-tab-target="dashboard">工作台</button>
+    <button type="button" class="mobile-tab-btn" data-mobile-tab-target="models">模型</button>
+    <button type="button" class="mobile-tab-btn" data-mobile-tab-target="monitor">诊断</button>
+  </nav>
+
+  <main class="workspace-shell">
+    <div class="workspace-main">
+      <section class="panel task-panel" id="taskCenter" data-mobile-zone="dashboard">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow accent">主区 · 任务中心</p>
+            <h2>统一查看 cover / train 任务</h2>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn" id="jobsRefreshBtn" type="button">刷新任务</button>
+          </div>
+        </div>
+
+        <form class="filter-row" id="jobsFilterForm">
+          <label>
+            <span>任务类型</span>
+            <select id="jobsFilterType">
+              <option value="">全部</option>
+              <option value="cover">翻唱</option>
+              <option value="train">训练</option>
+            </select>
+          </label>
+          <label>
+            <span>状态</span>
+            <select id="jobsFilterStatus">
+              <option value="">全部</option>
+              <option value="pending">排队中</option>
+              <option value="分离中">进行中 / 分离</option>
+              <option value="修音中">进行中 / 修音</option>
+              <option value="变声中">进行中 / 变声</option>
+              <option value="混音中">进行中 / 混音</option>
+              <option value="切片中">进行中 / 预处理</option>
+              <option value="训练中">进行中 / 训练</option>
+              <option value="完成">完成</option>
+              <option value="失败">失败</option>
+              <option value="已取消">已取消</option>
+            </select>
+          </label>
+          <label>
+            <span>策略</span>
+            <select id="jobsFilterStrategy">
+              <option value="">全部</option>
+              <option value="cover_strategy">AI 翻唱</option>
+              <option value="single_long_preprocess">单文件训练</option>
+              <option value="multi_clean_direct">多文件精训</option>
+            </select>
+          </label>
+          <label class="wide">
+            <span>音色名称</span>
+            <input id="jobsFilterVoiceName" type="text" placeholder="按 voice_name 模糊筛选">
+          </label>
+          <div class="filter-actions">
+            <button class="primary-btn warm" id="jobsApplyBtn" type="submit">应用筛选</button>
+            <button class="ghost-btn" id="jobsResetBtn" type="button">重置</button>
+          </div>
+        </form>
+
+        <div class="task-layout">
+          <div class="task-list-block">
+            <div class="table-wrap">
+              <table class="job-table">
+                <thead>
+                  <tr>
+                    <th>Job</th>
+                    <th>类型</th>
+                    <th>策略</th>
+                    <th>状态</th>
+                    <th>阶段</th>
+                    <th>音色</th>
+                    <th>创建时间</th>
+                  </tr>
+                </thead>
+                <tbody id="jobsTableBody">
+                  <tr><td colspan="7" class="table-placeholder">正在加载任务列表...</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="pagination-row">
+              <button class="ghost-btn" id="jobsPrevBtn" type="button">上一页</button>
+              <span id="jobsPageInfo">第 1 页</span>
+              <button class="ghost-btn" id="jobsNextBtn" type="button">下一页</button>
+            </div>
+          </div>
+
+          <aside class="detail-panel" id="jobDetailPanel">
+            <div class="detail-header">
+              <div>
+                <p class="eyebrow accent">任务详情</p>
+                <h3 id="jobDetailTitle">请选择一个任务</h3>
+              </div>
+              <div class="detail-actions" id="jobActionBar"></div>
+            </div>
+
+            <div class="detail-meta" id="jobMetaGrid">
+              <div class="meta-card empty">选中任务后，这里会显示状态、阶段、路径和错误摘要。</div>
+            </div>
+
+            <div class="detail-section">
+              <div class="detail-section-head">
+                <h4>关联数据集</h4>
+              </div>
+              <div class="detail-list" id="jobDatasetsList">
+                <div class="detail-empty">当前任务没有关联数据集。</div>
+              </div>
+            </div>
+
+            <div class="detail-section">
+              <div class="detail-section-head">
+                <h4>产物</h4>
+              </div>
+              <div class="detail-list" id="jobArtifactsList">
+                <div class="detail-empty">当前还没有登记产物。</div>
+              </div>
+            </div>
+
+            <div class="detail-section">
+              <div class="detail-section-head">
+                <h4>阶段日志</h4>
+              </div>
+              <div class="timeline" id="jobStageLogsList">
+                <div class="detail-empty">当前还没有阶段日志。</div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="panel entry-panel" id="entryCenter" data-mobile-zone="dashboard">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow warm">次区 · 创建入口</p>
+            <h2>只负责创建 cover / train job</h2>
+          </div>
+        </div>
+
+        <div class="entry-grid entry-grid-three">
+          <article class="entry-card">
+            <div class="entry-card-head">
+              <h3>AI 一键翻唱</h3>
+              <p>上传歌曲并选择一个可用模型，后端会自动完成预检与队列编排。</p>
+            </div>
+            <form id="coverCreateForm" class="stack-form">
+              <label>
+                <span>选择模型</span>
+                <select id="coverModelSelect">
+                  <option value="">正在加载可用模型...</option>
+                </select>
+              </label>
+              <label>
+                <span>上传歌曲文件</span>
+                <input id="coverFileInput" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a">
+              </label>
+              <div class="file-hint" id="coverFileHint">尚未选择文件。</div>
+              <div class="availability-note" id="coverAvailabilityNote">正在等待诊断结果...</div>
+              <button class="primary-btn warm" id="coverCreateBtn" type="submit" disabled>创建 cover job</button>
+            </form>
+          </article>
+
+          <article class="entry-card">
+            <div class="entry-card-head">
+              <h3>单文件训练</h3>
+              <p>适合长干声单文件，后端会进入 single_long_preprocess 流程。</p>
+            </div>
+            <form id="singleTrainCreateForm" class="stack-form">
+              <label>
+                <span>音色名称</span>
+                <input id="singleTrainVoiceNameInput" type="text" maxlength="40" placeholder="例如：晚风主唱音色">
+              </label>
+              <label>
+                <span>上传单个干声文件</span>
+                <input id="singleTrainFileInput" type="file" accept=".wav,.mp3,.flac">
+              </label>
+              <div class="file-hint" id="singleTrainFileHint">尚未选择训练文件。</div>
+              <div class="mode-chip" id="singleTrainModeChip">等待选择文件</div>
+              <div class="availability-note train" id="singleTrainAvailabilityNote">请先选择训练文件和音色名称。</div>
+              <button class="primary-btn train" id="singleTrainCreateBtn" type="submit">创建 single train job</button>
+            </form>
+          </article>
+
+          <article class="entry-card">
+            <div class="entry-card-head">
+              <h3>多文件精训</h3>
+              <p>适合已经剪好的短素材，后端会直接进入 multi_clean_direct 流程。</p>
+            </div>
+            <form id="multiTrainCreateForm" class="stack-form">
+              <label>
+                <span>音色名称</span>
+                <input id="multiTrainVoiceNameInput" type="text" maxlength="40" placeholder="例如：晚风批量精训">
+              </label>
+              <label>
+                <span>上传多个干声文件</span>
+                <input id="multiTrainFilesInput" type="file" accept=".wav,.mp3,.flac" multiple>
+              </label>
+              <div class="file-hint" id="multiTrainFilesHint">尚未选择训练文件。</div>
+              <div class="mode-chip" id="multiTrainModeChip">等待选择文件</div>
+              <div class="availability-note train" id="multiTrainAvailabilityNote">请先选择训练文件和音色名称。</div>
+              <button class="primary-btn train" id="multiTrainCreateBtn" type="submit">创建 multi train job</button>
+            </form>
+          </article>
+        </div>
+      </section>
+    </div>
+
+    <aside class="workspace-side">
+      <section class="panel panel-side" id="modelPanel" data-mobile-zone="models">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow accent">侧区 · 模型面板</p>
+            <h2>区分“存在”和“可用”</h2>
+          </div>
+          <div class="panel-actions">
+            <label class="toggle-line">
+              <input id="modelsIncludeUnavailable" type="checkbox" checked>
+              <span>显示不可用模型</span>
+            </label>
+            <button class="ghost-btn" id="modelsRefreshBtn" type="button">刷新模型</button>
+          </div>
+        </div>
+
+        <div class="model-summary" id="modelsSummary">正在读取模型列表...</div>
+        <div class="model-admin">
+          <div class="mini-head">
+            <strong>导入已有模型 / 重新扫描</strong>
+            <span>模型存在不代表能直接翻唱，只有“可用”模型才会出现在翻唱下拉框。</span>
+          </div>
+          <form id="modelImportForm" class="stack-form compact">
+            <label>
+              <span>模型名称</span>
+              <input id="modelImportName" type="text" placeholder="例如：晚风主唱音色">
+            </label>
+            <label>
+              <span>pth 路径</span>
+              <input id="modelImportPth" type="text" placeholder="D:\\...\\model.pth 或 shared_data/weights/model.pth">
+            </label>
+            <label>
+              <span>index 路径</span>
+              <input id="modelImportIndex" type="text" placeholder="可选：D:\\...\\model.index">
+            </label>
+            <label>
+              <span>默认音高</span>
+              <input id="modelImportPitch" type="number" value="0">
+            </label>
+            <div class="panel-actions">
+              <button class="primary-btn warm" id="modelImportBtn" type="submit">导入模型</button>
+              <button class="ghost-btn" id="modelsRescanBtn" type="button">重新扫描模型</button>
+            </div>
+          </form>
+          <div class="availability-note" id="modelPanelNotice">如果列表里只有“已登记”但不是“可用”的模型，请先修正路径或重新扫描模型目录。</div>
+        </div>
+        <div class="model-list" id="modelsList"></div>
+        <div class="model-detail" id="modelDetailCard">
+          <div class="detail-empty">点击一个模型即可查看详情。</div>
+        </div>
+      </section>
+
+      <section class="panel panel-side" id="diagnosticsPanel" data-mobile-zone="monitor">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow warm">侧区 · 系统诊断</p>
+            <h2>直接告诉你为什么不能做</h2>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn" id="diagnosticsRefreshBtn" type="button">刷新诊断</button>
+          </div>
+        </div>
+
+        <div class="diagnostic-grid">
+          <div class="diag-card">
+            <span class="diag-label">RVC 服务</span>
+            <strong id="diagRvcStatus">正在检测...</strong>
+          </div>
+          <div class="diag-card">
+            <span class="diag-label">可用模型数</span>
+            <strong id="diagUsableModelCount">0</strong>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section-head">
+            <h4>缺失依赖 / 阻塞项</h4>
+          </div>
+          <div class="tag-list" id="diagMissingDeps">
+            <span class="detail-empty">暂无诊断数据。</span>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section-head">
+            <h4>下一步建议</h4>
+          </div>
+          <div class="detail-list" id="diagGuidance">
+            <div class="detail-empty">诊断建议会显示在这里。</div>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section-head">
+            <h4>训练预检</h4>
+          </div>
+          <div class="detail-list" id="diagTrainChecks"></div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section-head">
+            <h4>翻唱预检</h4>
+          </div>
+          <div class="detail-list" id="diagCoverChecks"></div>
+        </div>
+
+        <div class="detail-section">
+          <div class="detail-section-head">
+            <h4>最近失败任务</h4>
+          </div>
+          <div class="detail-list" id="diagFailedJobs"></div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <div id="toastRoot" class="toast-root"></div>
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>
