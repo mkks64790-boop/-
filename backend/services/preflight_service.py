@@ -9,6 +9,7 @@ from gradio_client.exceptions import AppError
 
 try:
     from ..services.model_service import get_voice_model, resolve_voice_model_file
+    from ..services.audio_material_service import build_material_check
     from ..voice_changer import (
         get_rvc_service_status,
         _discover_rvc_base_url,
@@ -25,6 +26,7 @@ try:
     from ..db import PROJECT_ROOT
 except ImportError:
     from services.model_service import get_voice_model, resolve_voice_model_file
+    from services.audio_material_service import build_material_check
     from voice_changer import (
         get_rvc_service_status,
         _discover_rvc_base_url,
@@ -140,6 +142,12 @@ def _check_meta(check_name: str) -> dict:
             "label": "训练索引脚本",
             "next_step": "检查 RVC 安装目录中的 train-index-v2.py 是否存在。",
             "needs_external_fix": True,
+        },
+        "train_material_profile": {
+            "category": "material",
+            "label": "训练素材分流",
+            "next_step": "请根据素材识别结果切换到正确的训练入口。",
+            "needs_external_fix": False,
         },
         "hubert_model": {
             "category": "asset",
@@ -302,8 +310,8 @@ def _probe_cover_model_loadability(model_id: str, resolved_path: str, index_path
     return checks, errors
 
 
-def run_train_preflight(strategy_key: str) -> dict:
-    checks = _enrich_checks([
+def run_train_preflight(strategy_key: str, material_decision: dict | None = None) -> dict:
+    env_checks = _enrich_checks([
         _check_path("rvc_root", RVC_WEBUI_DIR, "dir"),
         _check_path("rvc_python", RVC_PYTHON, "file"),
         _check_path("train_preprocess_script", os.path.join(RVC_WEBUI_DIR, "infer", "modules", "train", "preprocess.py")),
@@ -319,11 +327,36 @@ def run_train_preflight(strategy_key: str) -> dict:
         _check_python_import(RVC_PYTHON, "faiss", cwd=RVC_WEBUI_DIR),
         _check_python_import(RVC_PYTHON, "sklearn", cwd=RVC_WEBUI_DIR),
     ])
-    ok = all(check["ok"] for check in checks)
+    checks = list(env_checks)
+    if material_decision:
+        checks.append(_enrich_checks([build_material_check(material_decision)])[0])
+
+    environment_ok = all(check["ok"] for check in env_checks)
+    material_ok = True
+    if material_decision and material_decision.get("submission_allowed") is not None:
+        material_ok = bool(material_decision.get("submission_allowed"))
+
+    ok = environment_ok and material_ok
     return {
         "ok": ok,
+        "environment_ok": environment_ok,
+        "material_ok": material_ok,
+        "submission_allowed": ok,
         "job_type": "train",
         "strategy_key": strategy_key,
+        "material_profile": material_decision.get("material_profile") if material_decision else "",
+        "duration_seconds": material_decision.get("duration_seconds") if material_decision else None,
+        "duration_label": material_decision.get("duration_label") if material_decision else "",
+        "sample_rate": material_decision.get("sample_rate") if material_decision else None,
+        "channels": material_decision.get("channels") if material_decision else None,
+        "codec": material_decision.get("codec") if material_decision else "",
+        "container": material_decision.get("container") if material_decision else "",
+        "bit_rate": material_decision.get("bit_rate") if material_decision else None,
+        "recommended_route": material_decision.get("recommended_route") if material_decision else strategy_key,
+        "single_long_eligible": material_decision.get("single_long_eligible") if material_decision else None,
+        "reason": material_decision.get("reason") if material_decision else "",
+        "next_step": material_decision.get("next_step") if material_decision else "",
+        "material_decision": material_decision or None,
         "checks": checks,
         "errors": [c for c in checks if not c["ok"]],
     }

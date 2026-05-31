@@ -40,6 +40,9 @@ RVC_FALLBACK_BASES = [
     "http://127.0.0.1:7866",
     "http://127.0.0.1:7865",
 ]
+ENGINE_KIND = "rvc_webui_local"
+COVER_INFERENCE_MODE = "webui_api_local_compat"
+TRAIN_BACKEND_MODE = "local_rvc_scripts"
 
 CONNECT_TIMEOUT = 5
 STATUS_VC_PROCESSING = "变声中"
@@ -193,6 +196,18 @@ def get_rvc_service_status() -> dict:
     return {
         "base_url": base_url or (_candidate_rvc_bases()[0] if _candidate_rvc_bases() else ""),
         "online": bool(base_url),
+    }
+
+
+def get_engine_summary() -> dict:
+    """Return a product-facing summary for the local RVC engine."""
+    status = get_rvc_service_status()
+    return {
+        **status,
+        "engine_kind": ENGINE_KIND,
+        "rvc_root": RVC_WEBUI_DIR,
+        "cover_inference_mode": COVER_INFERENCE_MODE,
+        "train_backend_mode": TRAIN_BACKEND_MODE,
     }
 
 

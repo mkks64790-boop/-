@@ -7,6 +7,7 @@ FeiShark Studio - 数据库模块
   - train: 音色训练任务（切片→训练→入库）
 """
 
+import json
 import os
 import sqlite3
 import threading
@@ -18,6 +19,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEIGHTS_DIR = os.path.join(PROJECT_ROOT, "shared_data", "weights")
 OUTPUT_ROOT = os.path.join(PROJECT_ROOT, "shared_data", "outputs")
 JOBS_ROOT = os.path.join(PROJECT_ROOT, "shared_data", "jobs")
+BATCHES_ROOT = os.path.join(PROJECT_ROOT, "shared_data", "batches")
 
 ACTIVE_COMPUTE_STATUSES = {
     "分离中",
@@ -89,10 +91,14 @@ def init_db():
                 job_id         TEXT PRIMARY KEY,
                 legacy_task_id TEXT UNIQUE,
                 job_type       TEXT NOT NULL,
+                job_kind       TEXT NOT NULL DEFAULT '',
                 strategy_key   TEXT NOT NULL DEFAULT '',
                 status         TEXT NOT NULL DEFAULT 'pending',
                 current_stage  TEXT DEFAULT '',
                 compute_ready  INTEGER NOT NULL DEFAULT 0,
+                track_id       TEXT DEFAULT '',
+                resource_class TEXT NOT NULL DEFAULT 'gpu_heavy',
+                depends_on_json TEXT DEFAULT '[]',
                 voice_model_id TEXT DEFAULT '',
                 voice_name     TEXT DEFAULT '',
                 input_path     TEXT DEFAULT '',
@@ -170,6 +176,80 @@ def init_db():
                 updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(source_job_id) REFERENCES jobs(job_id)
             );
+
+            CREATE TABLE IF NOT EXISTS release_batches (
+                batch_id              TEXT PRIMARY KEY,
+                batch_name            TEXT NOT NULL,
+                status                TEXT NOT NULL DEFAULT 'draft',
+                target_platforms_json TEXT DEFAULT '[]',
+                output_root           TEXT NOT NULL DEFAULT '',
+                metadata_json         TEXT DEFAULT '{}',
+                created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS tracks (
+                track_id                    TEXT PRIMARY KEY,
+                batch_id                    TEXT NOT NULL,
+                title                       TEXT NOT NULL DEFAULT '',
+                artist                      TEXT NOT NULL DEFAULT '',
+                source_type                 TEXT NOT NULL DEFAULT 'upload',
+                status                      TEXT NOT NULL DEFAULT 'draft',
+                notes                       TEXT DEFAULT '',
+                source_audio_path           TEXT NOT NULL DEFAULT '',
+                current_master_job_id       TEXT DEFAULT '',
+                current_master_artifact_id  TEXT DEFAULT '',
+                current_lyric_document_id   TEXT DEFAULT '',
+                current_timeline_version_id TEXT DEFAULT '',
+                metadata_json               TEXT DEFAULT '{}',
+                created_at                  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at                  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(batch_id) REFERENCES release_batches(batch_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS lyric_documents (
+                lyric_document_id TEXT PRIMARY KEY,
+                track_id          TEXT NOT NULL,
+                source            TEXT NOT NULL DEFAULT 'manual',
+                language          TEXT NOT NULL DEFAULT 'zh-CN',
+                title             TEXT DEFAULT '',
+                text_content      TEXT NOT NULL DEFAULT '',
+                structure_json    TEXT DEFAULT '{}',
+                metadata_json     TEXT DEFAULT '{}',
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(track_id) REFERENCES tracks(track_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS lyric_timeline_versions (
+                timeline_id        TEXT PRIMARY KEY,
+                track_id           TEXT NOT NULL,
+                lyric_document_id  TEXT NOT NULL,
+                engine             TEXT NOT NULL DEFAULT 'stub_align_v1',
+                align_mode         TEXT NOT NULL DEFAULT 'balanced_lines',
+                status             TEXT NOT NULL DEFAULT 'draft',
+                version_label      TEXT NOT NULL DEFAULT '',
+                txt_path           TEXT DEFAULT '',
+                lrc_path           TEXT DEFAULT '',
+                srt_path           TEXT DEFAULT '',
+                ass_path           TEXT DEFAULT '',
+                preview_json       TEXT DEFAULT '[]',
+                metadata_json      TEXT DEFAULT '{}',
+                is_current         INTEGER NOT NULL DEFAULT 0,
+                created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(track_id) REFERENCES tracks(track_id),
+                FOREIGN KEY(lyric_document_id) REFERENCES lyric_documents(lyric_document_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS audit_events (
+                event_id     TEXT PRIMARY KEY,
+                entity_type  TEXT NOT NULL,
+                entity_id    TEXT NOT NULL,
+                action       TEXT NOT NULL,
+                detail_json  TEXT DEFAULT '{}',
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
         # 兼容迁移：旧表缺少 task_type 和 voice_name 时自动添加
@@ -177,6 +257,12 @@ def init_db():
         _migrate_add_column(conn, "tasks", "voice_name", "TEXT DEFAULT ''")
         _migrate_add_column(conn, "tasks", "model_id", "TEXT DEFAULT ''")
         _migrate_add_column(conn, "tasks", "compute_ready", "INTEGER NOT NULL DEFAULT 0")
+        _migrate_add_column(conn, "jobs", "job_kind", "TEXT NOT NULL DEFAULT ''")
+        _migrate_add_column(conn, "jobs", "track_id", "TEXT DEFAULT ''")
+        _migrate_add_column(conn, "jobs", "resource_class", "TEXT NOT NULL DEFAULT 'gpu_heavy'")
+        _migrate_add_column(conn, "jobs", "depends_on_json", "TEXT DEFAULT '[]'")
+        _migrate_add_column(conn, "tracks", "current_master_job_id", "TEXT DEFAULT ''")
+        _migrate_add_column(conn, "tracks", "current_master_artifact_id", "TEXT DEFAULT ''")
 
         conn.execute(
             "INSERT OR IGNORE INTO compute_mutex (mutex_name, owner_task_id, owner_task_type, owner_status) "
@@ -186,6 +272,7 @@ def init_db():
         _dedupe_new_tables(conn)
         _create_unique_indexes(conn)
         _backfill_legacy_jobs(conn)
+        _backfill_extended_job_fields(conn)
         _backfill_legacy_voice_models(conn)
         _backfill_job_current_stages(conn)
         conn.commit()
@@ -193,6 +280,7 @@ def init_db():
         # 确保权重目录存在
         os.makedirs(WEIGHTS_DIR, exist_ok=True)
         os.makedirs(JOBS_ROOT, exist_ok=True)
+        os.makedirs(BATCHES_ROOT, exist_ok=True)
 
         print(f"[OK] 数据库初始化完成: {DB_PATH}")
         print(f"[OK] 权重目录: {WEIGHTS_DIR}")
@@ -247,6 +335,18 @@ def _create_unique_indexes(conn):
 
         CREATE UNIQUE INDEX IF NOT EXISTS uq_job_stage_logs_identity
         ON job_stage_logs(job_id, stage_name, status, message);
+
+        CREATE INDEX IF NOT EXISTS idx_tracks_batch_created
+        ON tracks(batch_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_lyric_documents_track_created
+        ON lyric_documents(track_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_lyric_versions_track_created
+        ON lyric_timeline_versions(track_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_audit_events_entity_created
+        ON audit_events(entity_type, entity_id, created_at);
         """
     )
 
@@ -255,13 +355,14 @@ def _backfill_legacy_jobs(conn):
     conn.execute(
         """
         INSERT OR IGNORE INTO jobs (
-            job_id, legacy_task_id, job_type, strategy_key, status, current_stage,
-            compute_ready, voice_model_id, voice_name, input_path, output_root,
+            job_id, legacy_task_id, job_type, job_kind, strategy_key, status, current_stage,
+            compute_ready, track_id, resource_class, depends_on_json, voice_model_id, voice_name, input_path, output_root,
             error_log, metadata_json, created_at, updated_at
         )
         SELECT
             task_id,
             task_id,
+            CASE WHEN task_type = 'train' THEN 'train' ELSE 'cover' END,
             CASE WHEN task_type = 'train' THEN 'train' ELSE 'cover' END,
             CASE
                 WHEN task_type = 'train' THEN 'legacy_train'
@@ -271,6 +372,9 @@ def _backfill_legacy_jobs(conn):
             status,
             ?,
             compute_ready,
+            '',
+            'gpu_heavy',
+            '[]',
             COALESCE(model_id, ''),
             COALESCE(voice_name, ''),
             input_file,
@@ -282,6 +386,28 @@ def _backfill_legacy_jobs(conn):
         FROM tasks
         """,
         ("", os.path.join("shared_data", "jobs") + os.sep),
+    )
+
+
+def _backfill_extended_job_fields(conn):
+    conn.execute(
+        """
+        UPDATE jobs
+        SET job_kind = CASE
+                WHEN COALESCE(job_kind, '') != '' THEN job_kind
+                WHEN COALESCE(job_type, '') = 'train' THEN 'train'
+                ELSE 'cover'
+            END,
+            track_id = COALESCE(track_id, ''),
+            resource_class = CASE
+                WHEN COALESCE(resource_class, '') != '' THEN resource_class
+                ELSE 'gpu_heavy'
+            END,
+            depends_on_json = CASE
+                WHEN COALESCE(depends_on_json, '') != '' THEN depends_on_json
+                ELSE '[]'
+            END
+        """
     )
 
 
@@ -352,7 +478,7 @@ def _backfill_job_current_stages(conn):
 # ── CRUD ──────────────────────────────────────────────
 
 
-def add_voice_asset(model_id, model_name, pth_path, index_path, default_pitch=0, source_job_id: str = "") -> bool:
+def add_voice_asset(model_id, model_name, pth_path, index_path, default_pitch=0, source_job_id: str = "", metadata: dict | None = None) -> bool:
     """添加音色资产到知识库"""
     conn = get_connection()
     try:
@@ -369,12 +495,24 @@ def add_voice_asset(model_id, model_name, pth_path, index_path, default_pitch=0,
                 created_at, updated_at
             ) VALUES (
                 ?, ?, ?, COALESCE(NULLIF(?, ''), (SELECT source_job_id FROM voice_models WHERE voice_model_id = ?), NULL),
-                ?, ?, ?, 'ready', '{}',
+                ?, ?, ?, 'ready', COALESCE(NULLIF(?, ''), (SELECT metadata_json FROM voice_models WHERE voice_model_id = ?), '{}'),
                 COALESCE((SELECT created_at FROM voice_models WHERE voice_model_id = ?), CURRENT_TIMESTAMP),
                 CURRENT_TIMESTAMP
             )
             """,
-            (model_id, model_id, model_name, source_job_id, model_id, pth_path, index_path, default_pitch, model_id),
+            (
+                model_id,
+                model_id,
+                model_name,
+                source_job_id,
+                model_id,
+                pth_path,
+                index_path,
+                default_pitch,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                model_id,
+                model_id,
+            ),
         )
         conn.commit()
         ok = True
@@ -403,10 +541,10 @@ def create_task(task_id, input_file, task_type="cover") -> bool:
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO jobs (
-                        job_id, legacy_task_id, job_type, strategy_key, status, current_stage,
-                        compute_ready, voice_model_id, voice_name, input_path, output_root,
+                        job_id, legacy_task_id, job_type, job_kind, strategy_key, status, current_stage,
+                        compute_ready, track_id, resource_class, depends_on_json, voice_model_id, voice_name, input_path, output_root,
                         error_log, metadata_json, created_at, updated_at
-                    ) VALUES (?, ?, 'cover', 'cover_strategy', 'pending', '', 0, '', '', ?, ?, '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ) VALUES (?, ?, 'cover', 'cover', 'cover_strategy', 'pending', '', 0, '', 'gpu_heavy', '[]', '', '', ?, ?, '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     """,
                     (task_id, task_id, input_file, os.path.join("shared_data", "jobs", task_id)),
                 )
@@ -441,10 +579,10 @@ def create_train_task(task_id, voice_name, dataset_path) -> bool:
             conn.execute(
                 """
                 INSERT OR IGNORE INTO jobs (
-                    job_id, legacy_task_id, job_type, strategy_key, status, current_stage,
-                    compute_ready, voice_model_id, voice_name, input_path, output_root,
+                    job_id, legacy_task_id, job_type, job_kind, strategy_key, status, current_stage,
+                    compute_ready, track_id, resource_class, depends_on_json, voice_model_id, voice_name, input_path, output_root,
                     error_log, metadata_json, created_at, updated_at
-                ) VALUES (?, ?, 'train', 'legacy_train', 'pending', '', 0, '', ?, ?, ?, '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, 'train', 'train', 'legacy_train', 'pending', '', 0, '', 'gpu_heavy', '[]', '', ?, ?, ?, '', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
                 (task_id, task_id, voice_name, dataset_path, os.path.join("shared_data", "jobs", task_id)),
             )
@@ -463,7 +601,7 @@ def set_task_model_id(task_id: str, model_id: str) -> bool:
         conn.execute(
             """
             UPDATE jobs
-            SET voice_model_id = ?, job_type = 'cover', strategy_key = 'cover_strategy',
+            SET voice_model_id = ?, job_type = 'cover', job_kind = 'cover', strategy_key = 'cover_strategy',
                 compute_ready = 1, updated_at = CURRENT_TIMESTAMP
             WHERE job_id = ? OR legacy_task_id = ?
             """,
@@ -486,10 +624,10 @@ def mark_task_compute_ready(task_id: str, task_type: str) -> bool:
         conn.execute(
             """
             UPDATE jobs
-            SET job_type = ?, compute_ready = 1, updated_at = CURRENT_TIMESTAMP
+            SET job_type = ?, job_kind = ?, resource_class = 'gpu_heavy', compute_ready = 1, updated_at = CURRENT_TIMESTAMP
             WHERE job_id = ? OR legacy_task_id = ?
             """,
-            (task_type, task_id, task_id),
+            (task_type, task_type, task_id, task_id),
         )
         cursor = conn.execute(
             "UPDATE tasks SET task_type = ?, compute_ready = 1 WHERE task_id = ?",

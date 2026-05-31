@@ -28,3 +28,6 @@ playwright-report/
 test-results/
 stage16_desktop.png
 stage16_mobile.png
+stage*.png
+stage*-shots/
+stage15-shots/

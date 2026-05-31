@@ -3,11 +3,22 @@ import {
   $,
   escapeHtml,
   formatDateTime,
-  modelAvailabilityText,
+  loadUiState,
+  modelMaterialProfileLabel,
+  modelOriginLabel,
+  renderModelOriginPill,
   renderModelStatePill,
   renderPathLine,
+  saveUiState,
   showToast,
+  slideToggle,
+  stageText,
+  statusText,
+  strategyLabel,
 } from "./ui.js";
+
+const MODELS_INVENTORY_STATE_KEY = "feishark_ui_models_inventory_collapsed";
+const MODEL_TECHNICAL_STATE_KEY = "feishark_ui_model_technical_collapsed";
 
 const state = {
   selectedModelId: null,
@@ -26,13 +37,113 @@ function buildModelSignature(model) {
     model.default_pitch ?? "",
     model.resolved_source || "",
     model.resolved_pth_path || "",
-    model.index_path || "",
-    model.exists ? "1" : "0",
+    model.resolved_index_path || model.index_path || "",
+    model.origin_kind || "",
+    model.source_job_id || "",
+    model.source_summary || "",
+    model.updated_at || "",
   ].join("|");
 }
 
 function renderFlag(label, tone = "") {
   return `<span class="artifact-chip ${tone}">${escapeHtml(label)}</span>`;
+}
+
+function getModelsInventoryCollapsed() {
+  return Boolean(loadUiState(MODELS_INVENTORY_STATE_KEY, true));
+}
+
+async function setModelsInventoryCollapsed(collapsed, { immediate = false } = {}) {
+  const drawer = $("modelsInventoryDrawer");
+  const body = $("modelsInventoryBody");
+  const button = $("modelsInventoryToggleBtn");
+  if (!drawer || !body || !button) return;
+
+  saveUiState(MODELS_INVENTORY_STATE_KEY, collapsed);
+  drawer.dataset.collapsed = String(collapsed);
+  drawer.classList.toggle("is-collapsed", collapsed);
+  button.setAttribute("aria-expanded", String(!collapsed));
+  button.textContent = collapsed ? "展开模型库存 ▾" : "收起模型库存 ▴";
+
+  const alreadyCollapsed = body.hidden;
+  if (immediate || alreadyCollapsed === collapsed) {
+    body.hidden = collapsed;
+    return;
+  }
+
+  await slideToggle(body, !collapsed);
+}
+
+function getModelTechnicalCollapsed() {
+  return Boolean(loadUiState(MODEL_TECHNICAL_STATE_KEY, true));
+}
+
+async function setModelTechnicalCollapsed(collapsed, { immediate = false } = {}) {
+  const drawer = $("modelTechnicalDrawer");
+  const body = $("modelTechnicalBody");
+  const button = $("modelTechnicalToggleBtn");
+  if (!drawer || !body || !button) return;
+
+  saveUiState(MODEL_TECHNICAL_STATE_KEY, collapsed);
+  drawer.dataset.collapsed = String(collapsed);
+  drawer.classList.toggle("is-collapsed", collapsed);
+  button.setAttribute("aria-expanded", String(!collapsed));
+  button.textContent = collapsed ? "展开技术详情 ▾" : "收起技术详情 ▴";
+
+  if (immediate || body.hidden === collapsed) {
+    body.hidden = collapsed;
+    return;
+  }
+
+  await slideToggle(body, !collapsed);
+}
+
+function getOriginSummary(model) {
+  return model.source_summary || (
+    model.origin_kind === "trained_local"
+      ? `来自训练任务 ${model.source_job_id || "-"}`
+      : model.origin_kind === "rescanned_local"
+        ? "来自本地目录扫描"
+        : "来自外部导入"
+  );
+}
+
+function getUnavailableReason(model) {
+  if (model.usable) return "";
+  if (model.resolved_source === "not_found") {
+    return "当前 .pth 或 .index 路径无效，需要修正路径后才能用于翻唱。";
+  }
+  if (model.exists) {
+    return "模型记录已登记，但文件还没有通过当前环境校验。";
+  }
+  return "模型记录还不完整，暂时不能送入翻唱入口。";
+}
+
+function getModelHeadline(model) {
+  if (model.usable) {
+    if (model.origin_kind === "trained_local" && model.source_job_id) {
+      return `当前模型已可用于翻唱，来源于训练任务 ${model.source_job_id}。`;
+    }
+    return "当前模型已可用于翻唱，可直接在创建入口使用。";
+  }
+  if (model.origin_kind === "trained_local" && model.source_job_id) {
+    return `当前模型来自训练任务 ${model.source_job_id}，但权重路径还没有通过校验。`;
+  }
+  if (model.exists) return "当前模型已登记，但路径或文件状态异常，暂时不能用于翻唱。";
+  return "当前模型记录不完整，需要重新导入或重扫。";
+}
+
+function getModelNextStep(model) {
+  if (model.usable) return "下一步：可一键送入翻唱入口，或回看来源训练任务。";
+  if (model.origin_kind === "trained_local" && model.source_job_id) return "下一步：先回看来源训练任务，再检查当前 .pth / .index 路径。";
+  if (model.exists) return "下一步：检查 .pth / .index 路径，或重新扫描模型目录。";
+  return "下一步：补齐 .pth / .index 后重新导入模型。";
+}
+
+function getModelHumanStatus(model) {
+  if (model.usable) return "已可用于翻唱";
+  if (model.exists) return "已登记，待修复";
+  return "记录不完整";
 }
 
 function renderModelCard(model) {
@@ -50,65 +161,146 @@ function renderModelCard(model) {
         ${renderModelStatePill(model)}
       </div>
       <div class="model-meta">
-        <span>存在：${model.exists ? "是" : "否"}</span>
-        <span>可用：${model.usable ? "是" : "否"}</span>
+        <span>${escapeHtml(modelOriginLabel(model.origin_kind))}</span>
         <span>默认音高 ${escapeHtml(model.default_pitch)}</span>
+        ${model.source_strategy_key ? `<span>${escapeHtml(strategyLabel(model.source_strategy_key))}</span>` : ""}
       </div>
       <div class="model-badges">
-        ${renderFlag(model.exists ? "已登记" : "未登记", model.exists ? "pending" : "failed")}
-        ${renderFlag(model.usable ? "可用于翻唱" : "当前不可用于翻唱", model.usable ? "success" : "failed")}
+        ${renderModelOriginPill(model.origin_kind)}
+        ${renderFlag(model.usable ? "可用于翻唱" : "当前不可用", model.usable ? "success" : "failed")}
       </div>
+      <div class="detail-note model-source-summary" title="${escapeHtml(getOriginSummary(model))}">${escapeHtml(getOriginSummary(model))}</div>
       ${renderPathLine(model.resolved_pth_path || "-", { subtle: true })}
     </button>
   `;
 }
 
-function renderModelDetail(model) {
-  $("modelDetailCard").innerHTML = `
-    <div class="detail-section-head detail-section-head-inline">
-      <div>
-        <h4>${escapeHtml(model.model_name)}</h4>
-        <div class="model-mini-id mono" title="${escapeHtml(model.model_id)}">${escapeHtml(model.model_id)}</div>
+function renderDetailRow(label, valueHtml) {
+  return `
+    <div class="detail-meta-row">
+      <span class="detail-meta-key">${escapeHtml(label)}</span>
+      <div class="detail-meta-value">${valueHtml}</div>
+    </div>
+  `;
+}
+
+function renderDetailCard(title, rows = [], { wide = false } = {}) {
+  return `
+    <div class="meta-card detail-meta-card ${wide ? "wide" : ""}">
+      <div class="detail-meta-title">${escapeHtml(title)}</div>
+      <div class="detail-meta-lines">
+        ${rows.filter(Boolean).join("") || `<div class="detail-empty inline">暂无内容。</div>`}
       </div>
-      ${renderModelStatePill(model)}
     </div>
-    <div class="panel-actions">
-      <button class="ghost-btn" type="button" id="modelJumpDiagnosticsBtn">查看诊断</button>
+  `;
+}
+
+function renderDetailText(value, { subtle = false } = {}) {
+  const classes = ["detail-note", subtle ? "is-subtle" : ""].filter(Boolean).join(" ");
+  return `<div class="${classes}" title="${escapeHtml(value || "-")}">${escapeHtml(value || "-")}</div>`;
+}
+
+function renderEmptyModelDetail(message = "点击一个模型即可查看详情。") {
+  $("modelDetailCard").innerHTML = `
+    <div class="detail-summary-card">
+      <div class="detail-summary-head">
+        <div class="detail-summary-head-copy">
+          <p class="detail-summary-eyebrow">模型判定</p>
+          <h4 class="detail-summary-title">模型详情会显示在这里</h4>
+          <div class="detail-summary-subline">${escapeHtml(message)}</div>
+        </div>
+      </div>
+      <p class="detail-summary-text">这里会先告诉你模型能不能用于翻唱、它来自哪里，以及下一步最合理的动作。</p>
     </div>
-    <div class="detail-meta">
-      <div class="meta-card"><div class="meta-label">模型 ID</div><div class="meta-value mono" title="${escapeHtml(model.model_id)}">${escapeHtml(model.model_id)}</div></div>
-      <div class="meta-card"><div class="meta-label">存在</div><div class="meta-value">${model.exists ? "是" : "否"}</div></div>
-      <div class="meta-card"><div class="meta-label">可用</div><div class="meta-value">${model.usable ? "是" : "否"}</div></div>
-      <div class="meta-card"><div class="meta-label">状态</div><div class="meta-value">${escapeHtml(modelAvailabilityText(model))}</div></div>
-      <div class="meta-card"><div class="meta-label">默认音高</div><div class="meta-value">${escapeHtml(model.default_pitch)}</div></div>
-      <div class="meta-card"><div class="meta-label">解析来源</div><div class="meta-value">${escapeHtml(model.resolved_source || "-")}</div></div>
-      <div class="meta-card"><div class="meta-label">后端状态</div><div class="meta-value">${escapeHtml(model.status || "-")}</div></div>
-      <div class="meta-card"><div class="meta-label">更新时间</div><div class="meta-value">${escapeHtml(formatDateTime(model.updated_at))}</div></div>
+  `;
+}
+
+function renderModelDetail(model) {
+  const resolvedIndexPath = model.resolved_index_path || model.index_path || "-";
+  const sourceSummary = getOriginSummary(model);
+  $("modelDetailCard").innerHTML = `
+    <div class="detail-summary-card">
+      <div class="detail-summary-head">
+        <div class="detail-summary-head-copy">
+          <p class="detail-summary-eyebrow">模型判定</p>
+          <h4 class="detail-summary-title" title="${escapeHtml(model.model_name)}">${escapeHtml(model.model_name)}</h4>
+          <div class="detail-summary-subline mono" title="${escapeHtml(model.model_id)}">${escapeHtml(model.model_id)}</div>
+        </div>
+        <div class="detail-summary-badges">
+          ${renderModelOriginPill(model.origin_kind)}
+          ${renderModelStatePill(model)}
+        </div>
+      </div>
+      <p class="detail-summary-text">${escapeHtml(getModelHeadline(model))}</p>
+      <div class="detail-summary-foot">${escapeHtml(getModelNextStep(model))}</div>
+      ${!model.usable ? `<div class="detail-inline-callout">${escapeHtml(getUnavailableReason(model))}</div>` : ""}
+      <div class="panel-actions">
+        ${model.usable ? `<button class="primary-btn warm" type="button" id="modelUseForCoverBtn">用于翻唱</button>` : ""}
+        ${model.source_job_id ? `<button class="ghost-btn" type="button" id="modelSourceJobBtn" data-source-job-id="${escapeHtml(model.source_job_id)}">查看来源任务</button>` : ""}
+        <button class="ghost-btn" type="button" id="modelJumpDiagnosticsBtn">查看诊断</button>
+      </div>
     </div>
-    <div class="detail-section">
-      <div class="detail-section-head"><h4>当前解析到的 .pth</h4></div>
-      ${renderPathLine(model.resolved_pth_path || "-")}
+
+    <div class="detail-meta detail-meta-product">
+      ${renderDetailCard("核心信息", [
+        renderDetailRow("模型 ID", `<div class="mono" title="${escapeHtml(model.model_id)}">${escapeHtml(model.model_id)}</div>`),
+        renderDetailRow("默认音高", escapeHtml(model.default_pitch ?? "-")),
+        renderDetailRow("当前状态", escapeHtml(getModelHumanStatus(model))),
+        renderDetailRow("更新时间", escapeHtml(formatDateTime(model.updated_at))),
+      ])}
+      ${renderDetailCard("来源信息", [
+        renderDetailRow("来源类型", escapeHtml(modelOriginLabel(model.origin_kind))),
+        renderDetailRow("来源摘要", renderDetailText(sourceSummary)),
+        model.source_strategy_key ? renderDetailRow("训练策略", escapeHtml(strategyLabel(model.source_strategy_key))) : "",
+        model.source_material_profile ? renderDetailRow("素材画像", escapeHtml(modelMaterialProfileLabel(model.source_material_profile))) : "",
+        model.source_file_count ? renderDetailRow("文件数量", escapeHtml(`${model.source_file_count} 个文件`)) : "",
+        model.source_duration_label ? renderDetailRow("素材时长", escapeHtml(model.source_duration_label)) : "",
+        model.source_dataset_id ? renderDetailRow("数据集 ID", `<div class="mono" title="${escapeHtml(model.source_dataset_id)}">${escapeHtml(model.source_dataset_id)}</div>`) : "",
+        model.source_job_id ? renderDetailRow("来源任务", `<div class="mono" title="${escapeHtml(model.source_job_id)}">${escapeHtml(model.source_job_id)}</div>`) : "",
+      ], { wide: true })}
+      ${renderDetailCard("当前判定", [
+        renderDetailRow("是否可用", model.usable ? "是" : "否"),
+        renderDetailRow("来源任务状态", model.source_job_status ? escapeHtml(statusText(model.source_job_status)) : renderDetailText("无来源任务", { subtle: true })),
+        renderDetailRow("来源任务阶段", model.source_job_current_stage ? escapeHtml(stageText(model.source_job_current_stage)) : renderDetailText("无来源任务", { subtle: true })),
+        renderDetailRow("来源任务创建时间", model.source_job_created_at ? escapeHtml(formatDateTime(model.source_job_created_at)) : renderDetailText("无来源任务", { subtle: true })),
+      ])}
+      ${renderDetailCard("当前解析结果", [
+        renderDetailRow("当前 .pth", renderPathLine(model.resolved_pth_path || model.pth_path || "-", { subtle: !(model.resolved_pth_path || model.pth_path) })),
+        renderDetailRow("当前 .index", renderPathLine(resolvedIndexPath, { subtle: resolvedIndexPath === "-" })),
+      ], { wide: true })}
     </div>
-    <div class="detail-section">
-      <div class="detail-section-head"><h4>登记路径</h4></div>
-      ${renderPathLine(model.pth_path || "-", { subtle: true })}
-      ${renderPathLine(model.index_path || "-", { subtle: true })}
-    </div>
-    <div class="detail-section">
-      <div class="detail-section-head"><h4>使用说明</h4></div>
-      <div class="detail-empty">
-        ${model.usable
-          ? "这个模型已经达到可用状态，可以直接用于创建 cover job。"
-          : model.exists
-            ? "这个模型已经登记，但当前还没有达到可用状态。请优先检查路径、文件完整性和诊断面板。"
-            : "这个模型记录还不完整。请先导入正确的 .pth / .index，或重新扫描模型目录。"}
+
+    <div class="detail-drawer" id="modelTechnicalDrawer" data-collapsed="true">
+      <div class="detail-section-head detail-drawer-head">
+        <div>
+          <h4>技术详情</h4>
+          <div class="detail-drawer-summary">原始登记路径、解析来源和后端状态默认收在这里。</div>
+        </div>
+        <button
+          class="ghost-btn drawer-toggle-btn"
+          id="modelTechnicalToggleBtn"
+          type="button"
+          aria-controls="modelTechnicalBody"
+          aria-expanded="false"
+        >展开技术详情 ▾</button>
+      </div>
+      <div class="detail-drawer-body" id="modelTechnicalBody" hidden>
+        <div class="detail-meta detail-meta-product">
+          ${renderDetailCard("原始字段", [
+            renderDetailRow("解析来源", escapeHtml(model.resolved_source || "-")),
+            renderDetailRow("解析索引来源", escapeHtml(model.resolved_index_source || "-")),
+            renderDetailRow("后端状态", escapeHtml(model.status || "-")),
+          ])}
+          ${renderDetailCard("登记路径", [
+            renderDetailRow("登记 .pth", renderPathLine(model.pth_path || "-", { subtle: !model.pth_path })),
+            renderDetailRow("登记 .index", renderPathLine(model.index_path || "-", { subtle: !model.index_path })),
+          ], { wide: true })}
+        </div>
       </div>
     </div>
   `;
 
-  $("modelJumpDiagnosticsBtn").addEventListener("click", () => {
-    document.getElementById("diagnosticsPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  });
+  setModelTechnicalCollapsed(getModelTechnicalCollapsed(), { immediate: true }).catch(() => {});
 }
 
 async function loadModelDetail(modelId, { force = false } = {}) {
@@ -153,7 +345,8 @@ function updateCoverModelSelect(usableModels) {
 }
 
 function renderPanelSummary(panelModels, usableModels) {
-  $("modelsSummary").textContent = `当前显示 ${panelModels.length} 个模型，其中 ${usableModels.length} 个达到可用状态。`;
+  $("modelsSummary").textContent = `当前显示 ${panelModels.length} 个模型，其中 ${usableModels.length} 个已经达到可用于翻唱的状态。`;
+  $("modelsInventorySummary").textContent = `已登记 ${panelModels.length} 个 / 可用 ${usableModels.length} 个`;
   const notice = $("modelPanelNotice");
   if (usableModels.length) {
     notice.textContent = `翻唱入口当前可直接使用 ${usableModels.length} 个模型。只有“可用”模型会进入翻唱下拉框。`;
@@ -181,6 +374,51 @@ function renderModelList(panelModels) {
   state.lastRenderedSelection = selectionSignature;
 }
 
+function notifyModelsChanged() {
+  document.dispatchEvent(new CustomEvent("feishark:models-changed"));
+}
+
+function switchToDashboardIfNeeded() {
+  document.querySelector('[data-mobile-tab-target="dashboard"]')?.click();
+}
+
+function switchToModelsTabIfNeeded() {
+  document.querySelector('[data-mobile-tab-target="models"]')?.click();
+}
+
+async function useModelForCover() {
+  const modelId = state.selectedModelId;
+  const model = state.allModels.find(item => item.model_id === modelId);
+  if (!model || !model.usable) {
+    showToast(getUnavailableReason(model || {}), "error");
+    return;
+  }
+
+  const select = $("coverModelSelect");
+  if (select) {
+    select.value = model.model_id;
+    state.selectedCoverModelId = model.model_id;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  switchToDashboardIfNeeded();
+  $("entryCenter")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  $("coverModelSelect")?.focus?.({ preventScroll: true });
+  showToast(`已将模型 ${model.model_name} 选入翻唱入口`, "success");
+}
+
+async function focusModelById(modelId, { scroll = true, force = true } = {}) {
+  if (!modelId) return false;
+  state.selectedModelId = modelId;
+  renderModelList(state.allModels);
+  const detail = await loadModelDetail(modelId, { force });
+  if (detail && scroll) {
+    switchToModelsTabIfNeeded();
+    $("modelPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  return Boolean(detail);
+}
+
 export async function refreshModels() {
   const includeUnavailable = $("modelsIncludeUnavailable").checked;
 
@@ -205,7 +443,7 @@ export async function refreshModels() {
     renderModelList(panelModels);
 
     if (!panelModels.length) {
-      $("modelDetailCard").innerHTML = `<div class="detail-empty">当前没有可查看的模型详情。</div>`;
+      renderEmptyModelDetail("当前没有可查看的模型详情。");
       state.lastDetailSignature = "";
       return;
     }
@@ -213,17 +451,21 @@ export async function refreshModels() {
     await loadModelDetail(state.selectedModelId, { force: false });
   } catch (error) {
     $("modelsList").innerHTML = `<div class="detail-empty">模型面板加载失败。</div>`;
+    renderEmptyModelDetail("模型面板加载失败。");
     showToast(`模型列表加载失败：${toErrorMessage(error)}`, "error");
   }
 }
 
-function notifyModelsChanged() {
-  document.dispatchEvent(new CustomEvent("feishark:models-changed"));
-}
-
 export function initModels() {
+  setModelsInventoryCollapsed(getModelsInventoryCollapsed(), { immediate: true }).catch(() => {});
+  setModelTechnicalCollapsed(getModelTechnicalCollapsed(), { immediate: true }).catch(() => {});
+
   $("modelsRefreshBtn").addEventListener("click", () => refreshModels());
   $("modelsIncludeUnavailable").addEventListener("change", () => refreshModels());
+  $("modelsInventoryToggleBtn").addEventListener("click", () => {
+    const nextCollapsed = !getModelsInventoryCollapsed();
+    setModelsInventoryCollapsed(nextCollapsed).catch(() => {});
+  });
 
   $("coverModelSelect").addEventListener("change", event => {
     state.selectedCoverModelId = event.target.value;
@@ -265,6 +507,37 @@ export function initModels() {
     state.selectedModelId = card.dataset.modelId;
     renderModelList(state.allModels);
     await loadModelDetail(card.dataset.modelId, { force: true });
+  });
+
+  $("modelDetailCard").addEventListener("click", event => {
+    if (event.target.closest("#modelJumpDiagnosticsBtn")) {
+      $("diagnosticsPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+
+    if (event.target.closest("#modelTechnicalToggleBtn")) {
+      setModelTechnicalCollapsed(!getModelTechnicalCollapsed()).catch(() => {});
+      return;
+    }
+
+    if (event.target.closest("#modelUseForCoverBtn")) {
+      useModelForCover().catch(() => {});
+      return;
+    }
+
+    const sourceJobBtn = event.target.closest("#modelSourceJobBtn");
+    if (sourceJobBtn) {
+      const sourceJobId = sourceJobBtn.dataset.sourceJobId || "";
+      if (!sourceJobId) return;
+      switchToDashboardIfNeeded();
+      $("taskCenter")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.dispatchEvent(new CustomEvent("feishark:focus-job", { detail: { jobId: sourceJobId } }));
+    }
+  });
+
+  document.addEventListener("feishark:focus-model", event => {
+    const modelId = event.detail?.modelId || "";
+    focusModelById(modelId, { scroll: true, force: true }).catch(() => {});
   });
 }
 

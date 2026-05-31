@@ -28,22 +28,42 @@ except ImportError:
 
 try:
     from ..services.smoke_filter import is_smoke_job_record
+    from ..pipelines.runner import run_registered_pipeline
     from ..services.stage_log_service import list_stage_logs, log_stage
-    from ..strategies.strategy_registry import get_strategy
+    from ..services.track_service import (
+        mark_track_cover_job_complete,
+        mark_track_cover_job_created,
+        mark_track_cover_job_failed,
+        mark_track_cover_job_pending,
+        mark_track_cover_job_processing,
+        reset_track_cover_job_state,
+    )
 except ImportError:
     from services.smoke_filter import is_smoke_job_record
+    from pipelines.runner import run_registered_pipeline
     from services.stage_log_service import list_stage_logs, log_stage
-    from strategies.strategy_registry import get_strategy
+    from services.track_service import (
+        mark_track_cover_job_complete,
+        mark_track_cover_job_created,
+        mark_track_cover_job_failed,
+        mark_track_cover_job_pending,
+        mark_track_cover_job_processing,
+        reset_track_cover_job_state,
+    )
 
 
 @dataclass(kw_only=True)
 class BaseJob:
     job_id: str
     job_type: str
+    job_kind: str
     strategy_key: str
     status: str = "pending"
     current_stage: str = ""
     compute_ready: int = 0
+    track_id: str = ""
+    resource_class: str = "gpu_heavy"
+    depends_on: list[str] = field(default_factory=list)
     voice_model_id: str = ""
     voice_name: str = ""
     input_path: str = ""
@@ -63,17 +83,43 @@ class TrainJob(BaseJob):
     job_type: str = "train"
 
 
-def create_cover_job(job_id: str, input_path: str, output_root: str, metadata: dict | None = None) -> CoverJob:
+def create_cover_job(
+    job_id: str,
+    input_path: str,
+    output_root: str,
+    metadata: dict | None = None,
+    *,
+    track_id: str = "",
+    voice_model_id: str = "",
+    voice_name: str = "",
+    resource_class: str = "gpu_heavy",
+    depends_on: list[str] | None = None,
+) -> CoverJob:
     create_task(job_id, input_path, task_type="upload")
     job = CoverJob(
         job_id=job_id,
         legacy_task_id=job_id,
+        job_kind="cover",
         strategy_key="cover_strategy",
+        track_id=track_id,
+        resource_class=resource_class,
+        depends_on=list(depends_on or []),
+        voice_model_id=voice_model_id,
+        voice_name=voice_name,
         input_path=input_path,
         output_root=output_root,
         metadata=metadata or {},
     )
     _insert_job(job)
+    if job.track_id:
+        mark_track_cover_job_created(
+            job.track_id,
+            job.job_id,
+            model_id=job.voice_model_id,
+            voice_name=job.voice_name,
+            depends_on=job.depends_on,
+            metadata=job.metadata,
+        )
     return job
 
 
@@ -89,6 +135,7 @@ def create_train_job(
     job = TrainJob(
         job_id=job_id,
         legacy_task_id=job_id,
+        job_kind="train",
         strategy_key=strategy_key,
         voice_name=voice_name,
         input_path=dataset_path,
@@ -106,11 +153,11 @@ def _insert_job(job: BaseJob) -> None:
         conn.execute(
             """
             INSERT OR REPLACE INTO jobs (
-                job_id, legacy_task_id, job_type, strategy_key, status, current_stage,
-                compute_ready, voice_model_id, voice_name, input_path, output_root,
+                job_id, legacy_task_id, job_type, job_kind, strategy_key, status, current_stage,
+                compute_ready, track_id, resource_class, depends_on_json, voice_model_id, voice_name, input_path, output_root,
                 error_log, metadata_json, created_at, updated_at
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 COALESCE((SELECT created_at FROM jobs WHERE job_id = ?), CURRENT_TIMESTAMP),
                 CURRENT_TIMESTAMP
             )
@@ -119,10 +166,14 @@ def _insert_job(job: BaseJob) -> None:
                 job.job_id,
                 job.legacy_task_id or job.job_id,
                 job.job_type,
+                job.job_kind or job.job_type,
                 job.strategy_key,
                 job.status,
                 job.current_stage,
                 job.compute_ready,
+                job.track_id,
+                job.resource_class,
+                json.dumps(job.depends_on or [], ensure_ascii=False),
                 job.voice_model_id,
                 job.voice_name,
                 job.input_path,
@@ -163,7 +214,7 @@ def canonical_current_stage(job_row: dict | None, stage_logs: list[dict] | None 
     status = job_row.get("status") or ""
     if status == "pending":
         return "pending"
-    if status == "已取消":
+    if status == "\u5df2\u53d6\u6d88":
         return "cancelled"
 
     business_logs = [
@@ -178,9 +229,9 @@ def canonical_current_stage(job_row: dict | None, stage_logs: list[dict] | None 
         return current_stage
 
     job_type = job_row.get("job_type") or ""
-    if status == "完成":
+    if status == "\u5df2\u5b8c\u6210":
         return "cover_mix" if job_type == "cover" else "train_register_model"
-    if status == "失败":
+    if status == "\u5931\u8d25":
         return "failed"
     return status
 
@@ -196,10 +247,14 @@ def _row_to_job(row: dict) -> BaseJob:
     return cls(
         job_id=row["job_id"],
         legacy_task_id=row.get("legacy_task_id") or row["job_id"],
+        job_kind=row.get("job_kind") or row.get("job_type") or "cover",
         strategy_key=row.get("strategy_key") or "",
         status=row.get("status") or "pending",
         current_stage=row.get("current_stage") or "",
         compute_ready=row.get("compute_ready") or 0,
+        track_id=row.get("track_id") or "",
+        resource_class=row.get("resource_class") or "gpu_heavy",
+        depends_on=json.loads(row.get("depends_on_json") or "[]") if row.get("depends_on_json") else [],
         voice_model_id=row.get("voice_model_id") or "",
         voice_name=row.get("voice_name") or "",
         input_path=row.get("input_path") or "",
@@ -209,18 +264,18 @@ def _row_to_job(row: dict) -> BaseJob:
     )
 
 
-def activate_cover_job(job_id: str, voice_model_id: str) -> BaseJob | None:
+def activate_cover_job(job_id: str, voice_model_id: str, voice_name: str = "") -> BaseJob | None:
     set_task_model_id(job_id, voice_model_id)
     conn = get_connection()
     try:
         conn.execute(
             """
             UPDATE jobs
-            SET job_type = 'cover', strategy_key = 'cover_strategy',
-                compute_ready = 1, voice_model_id = ?, updated_at = CURRENT_TIMESTAMP
+            SET job_type = 'cover', job_kind = 'cover', resource_class = 'gpu_heavy', strategy_key = 'cover_strategy',
+                compute_ready = 1, voice_model_id = ?, voice_name = COALESCE(NULLIF(?, ''), voice_name), updated_at = CURRENT_TIMESTAMP
             WHERE job_id = ? OR legacy_task_id = ?
             """,
-            (voice_model_id, job_id, job_id),
+            (voice_model_id, voice_name, job_id, job_id),
         )
         conn.commit()
     finally:
@@ -235,7 +290,7 @@ def activate_train_job(job_id: str) -> BaseJob | None:
         conn.execute(
             """
             UPDATE jobs
-            SET job_type = 'train', compute_ready = 1, updated_at = CURRENT_TIMESTAMP
+            SET job_type = 'train', job_kind = 'train', resource_class = 'gpu_heavy', compute_ready = 1, updated_at = CURRENT_TIMESTAMP
             WHERE job_id = ? OR legacy_task_id = ?
             """,
             (job_id, job_id),
@@ -255,6 +310,13 @@ def reserve_job(job: BaseJob, start_status: str) -> bool:
     )
     if reserved:
         update_task_status(job.job_id, start_status, "")
+        if job.track_id and job.job_kind == "cover":
+            mark_track_cover_job_processing(
+                job.track_id,
+                job.job_id,
+                model_id=job.voice_model_id,
+                voice_name=job.voice_name,
+            )
     return reserved
 
 
@@ -267,11 +329,11 @@ def set_job_pending(job_id: str, message: str = "") -> None:
 
 
 def fail_job(job_id: str, message: str) -> None:
-    update_task_status(job_id, "失败", message[:500])
+    update_task_status(job_id, "\u5931\u8d25", message[:500])
 
 
 def complete_job(job_id: str) -> None:
-    update_task_status(job_id, "完成", "")
+    update_task_status(job_id, "\u5df2\u5b8c\u6210", "")
 
 
 def get_next_pending_job() -> BaseJob | None:
@@ -344,8 +406,8 @@ def job_summary(include_smoke: bool = False) -> dict:
         return {
             "pending_count": status_counts.get("pending", 0),
             "processing_count": sum(status_counts.get(status, 0) for status in ACTIVE_COMPUTE_STATUSES),
-            "failed_count": status_counts.get("失败", 0),
-            "completed_count": status_counts.get("完成", 0),
+            "failed_count": status_counts.get("\u5931\u8d25", 0),
+            "completed_count": status_counts.get("\u5df2\u5b8c\u6210", 0),
             "cover_count": type_counts.get("cover", 0),
             "train_count": type_counts.get("train", 0),
         }
@@ -393,49 +455,55 @@ def _build_control_result(job_id: str, action: str, message: str) -> dict:
 def retry_job(job_id: str) -> dict:
     job = get_job(job_id)
     if not job:
-        return {"ok": False, "error": "job_not_found", "message": "任务不存在"}
-    if job.status != "失败":
-        return {"ok": False, "error": "only_failed_job_can_retry", "message": "只有失败任务才能重试"}
+        return {"ok": False, "error": "job_not_found", "message": "浠诲姟涓嶅瓨鍦?"}
+    if job.status != "\u5931\u8d25":
+        return {"ok": False, "error": "only_failed_job_can_retry", "message": "鍙湁澶辫触浠诲姟鎵嶈兘閲嶈瘯"}
     set_job_pending(job_id, "")
+    if job.track_id and job.job_kind == "cover":
+        mark_track_cover_job_pending(job.track_id)
     log_stage(job_id, "job_control", "completed", "retry -> pending", {"action": "retry", "status": "pending"})
     return _build_control_result(
         job_id,
         action="retry",
-        message="失败任务已重新放回队列，算力空闲时会自动启动。",
+        message="澶辫触浠诲姟宸查噸鏂版斁鍥為槦鍒楋紝绠楀姏绌洪棽鏃朵細鑷姩鍚姩銆?",
     )
 
 
 def requeue_job(job_id: str) -> dict:
     job = get_job(job_id)
     if not job:
-        return {"ok": False, "error": "job_not_found", "message": "任务不存在"}
-    if job.status not in {"pending", "失败"}:
+        return {"ok": False, "error": "job_not_found", "message": "浠诲姟涓嶅瓨鍦?"}
+    if job.status not in {"pending", "\u5931\u8d25"}:
         return {
             "ok": False,
             "error": "only_pending_or_failed_job_can_requeue",
-            "message": "只有 pending 或失败任务才能重新入队",
+            "message": "鍙湁 pending 鎴栧け璐ヤ换鍔℃墠鑳介噸鏂板叆闃?",
         }
     set_job_pending(job_id, "")
+    if job.track_id and job.job_kind == "cover":
+        mark_track_cover_job_pending(job.track_id)
     log_stage(job_id, "job_control", "completed", "requeue -> pending", {"action": "requeue", "status": "pending"})
     return _build_control_result(
         job_id,
         action="requeue",
-        message="任务已重新入队；如果当前算力忙，会继续在队列中等待。",
+        message="浠诲姟宸查噸鏂板叆闃燂紱濡傛灉褰撳墠绠楀姏蹇欙紝浼氱户缁湪闃熷垪涓瓑寰呫€?",
     )
 
 
 def cancel_job(job_id: str) -> dict:
     job = get_job(job_id)
     if not job:
-        return {"ok": False, "error": "job_not_found", "message": "任务不存在"}
+        return {"ok": False, "error": "job_not_found", "message": "浠诲姟涓嶅瓨鍦?"}
     if job.status != "pending":
-        return {"ok": False, "error": "only_pending_job_can_cancel", "message": "只有 pending 任务才能取消"}
-    update_task_status(job_id, "已取消", "cancelled by user")
+        return {"ok": False, "error": "only_pending_job_can_cancel", "message": "鍙湁 pending 浠诲姟鎵嶈兘鍙栨秷"}
+    update_task_status(job_id, "\u5df2\u53d6\u6d88", "cancelled by user")
+    if job.track_id and job.job_kind == "cover":
+        reset_track_cover_job_state(job.track_id)
     log_stage(job_id, "job_control", "completed", "cancel -> cancelled", {"action": "cancel", "status": "cancelled"})
     return _build_control_result(
         job_id,
         action="cancel",
-        message="任务已取消，不会继续参与后续调度。",
+        message="浠诲姟宸插彇娑堬紝涓嶄細缁х画鍙備笌鍚庣画璋冨害銆?",
     )
 
 
@@ -445,16 +513,39 @@ def execute_job(job_id: str) -> dict:
         fail_job(job_id, "Job not found")
         return {"success": False, "error": "job_not_found"}
 
-    strategy = get_strategy(job.strategy_key)
-    log_stage(job.job_id, "job_dispatch", "started", f"dispatch -> {job.strategy_key}")
+    dispatch_key = job.strategy_key or job.job_kind or job.job_type
+    log_stage(job.job_id, "job_dispatch", "started", f"dispatch -> {dispatch_key}")
     try:
-        result = strategy.execute(job)
+        result = run_registered_pipeline(job)
         if result.get("success", False):
-            log_stage(job.job_id, "job_dispatch", "completed", f"strategy done -> {job.strategy_key}", result)
+            log_stage(job.job_id, "job_dispatch", "completed", f"strategy done -> {dispatch_key}", result)
+            if job.track_id and job.job_kind == "cover":
+                mark_track_cover_job_complete(
+                    job.track_id,
+                    job.job_id,
+                    model_id=job.voice_model_id,
+                    voice_name=job.voice_name,
+                )
         else:
-            log_stage(job.job_id, "job_dispatch", "failed", f"strategy failed -> {job.strategy_key}", result)
+            log_stage(job.job_id, "job_dispatch", "failed", f"strategy failed -> {dispatch_key}", result)
+            if job.track_id and job.job_kind == "cover":
+                mark_track_cover_job_failed(
+                    job.track_id,
+                    job.job_id,
+                    error=result.get("error", ""),
+                    model_id=job.voice_model_id,
+                    voice_name=job.voice_name,
+                )
         return result
     except Exception as exc:
         fail_job(job.job_id, str(exc))
-        log_stage(job.job_id, "job_dispatch", "failed", f"strategy exception -> {job.strategy_key}", {"error": str(exc)})
+        log_stage(job.job_id, "job_dispatch", "failed", f"strategy exception -> {dispatch_key}", {"error": str(exc)})
+        if job.track_id and job.job_kind == "cover":
+            mark_track_cover_job_failed(
+                job.track_id,
+                job.job_id,
+                error=str(exc),
+                model_id=job.voice_model_id,
+                voice_name=job.voice_name,
+            )
         return {"success": False, "error": str(exc)}

@@ -155,15 +155,36 @@ def run_train(client: TestClient, voice_name: str, files: list[Path]) -> dict:
     return {"job": job, "artifacts": artifacts}
 
 
+def assert_short_single_train_rejected(client: TestClient) -> dict:
+    file_path = UPLOADS / "train_c12177a47818.wav"
+    expect(file_path.exists(), f"short single train source missing: {file_path}")
+
+    step("single short train rejection start")
+    with open(file_path, "rb") as fh:
+        resp = client.post(
+            "/api/train",
+            data={"voice_name": f"stage29_short_reject_{int(time.time())}", "smoke": "true"},
+            files=[("files", (file_path.name, fh, "audio/wav"))],
+            timeout=1800,
+        )
+
+    expect(resp.status_code == 422, f"short single train should be rejected: {resp.status_code} {resp.text}")
+    detail = resp.json().get("detail", {})
+    expect(detail.get("code") == "train_material_not_eligible", f"unexpected rejection code: {detail}")
+    expect(detail.get("material_profile") == "single_short_out_of_window", f"unexpected material profile: {detail}")
+    expect(detail.get("recommended_route") == "multi_clean_direct", f"unexpected recommended route: {detail}")
+    expect(detail.get("single_long_eligible") is False, f"short single must not be single-long eligible: {detail}")
+    expect(detail.get("submission_allowed") is False, f"short single submission must be blocked: {detail}")
+    expect(bool(detail.get("reason")), f"short rejection missing reason: {detail}")
+    expect(bool(detail.get("next_step")), f"short rejection missing next_step: {detail}")
+    return detail
+
+
 def main() -> int:
     init_db()
     with TestClient(app) as client:
         cover_result = run_cover(client)
-        single_result = run_train(
-            client,
-            voice_name=f"stage10_single_smoke_{int(time.time())}",
-            files=[UPLOADS / "train_c12177a47818.wav"],
-        )
+        single_rejection = assert_short_single_train_rejected(client)
         multi_result = run_train(
             client,
             voice_name=f"stage10_multi_smoke_{int(time.time())}",
@@ -175,8 +196,8 @@ def main() -> int:
 
     step("cover pass")
     print(cover_result["job"]["job_id"], cover_result["model_id"])
-    step("single train pass")
-    print(single_result["job"]["job_id"])
+    step("single short train rejection pass")
+    print(single_rejection)
     step("multi train pass")
     print(multi_result["job"]["job_id"])
     step("all smoke checks pass")

@@ -1,4 +1,5 @@
 import os
+import shutil
 import uuid
 from typing import Iterable
 
@@ -14,6 +15,21 @@ except ImportError:
 
 def get_job_root(job_id: str) -> str:
     return os.path.join(JOBS_ROOT, job_id)
+
+
+def discard_job_workspace(job_id: str) -> bool:
+    root = os.path.realpath(get_job_root(job_id))
+    jobs_root = os.path.realpath(JOBS_ROOT)
+    try:
+        within_root = os.path.commonpath([root, jobs_root]) == jobs_root
+    except ValueError:
+        within_root = False
+
+    if not within_root or not os.path.isdir(root):
+        return False
+
+    shutil.rmtree(root)
+    return True
 
 
 def ensure_job_dirs(job_id: str) -> dict[str, str]:

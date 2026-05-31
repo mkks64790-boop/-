@@ -145,23 +145,42 @@ def run_train_case(client: TestClient, voice_name: str, files: list[Path], expec
     return {"job": job, "artifacts": artifacts}
 
 
+def assert_short_single_train_rejected(client: TestClient) -> dict:
+    file_path = UPLOADS / "train_c12177a47818.wav"
+    expect(file_path.exists(), f"short single train source missing: {file_path}")
+
+    with file_path.open("rb") as handle:
+        resp = client.post(
+            "/api/train",
+            data={"voice_name": f"stage11_short_reject_{int(time.time())}", "smoke": "true"},
+            files=[("files", (file_path.name, handle, "audio/wav"))],
+            timeout=1800,
+        )
+
+    expect(resp.status_code == 422, f"short single train should be rejected: {resp.status_code} {resp.text}")
+    detail = resp.json().get("detail", {})
+    expect(detail.get("code") == "train_material_not_eligible", f"unexpected rejection code: {detail}")
+    expect(detail.get("material_profile") == "single_short_out_of_window", f"unexpected material profile: {detail}")
+    expect(detail.get("recommended_route") == "multi_clean_direct", f"unexpected recommended route: {detail}")
+    expect(detail.get("single_long_eligible") is False, f"short single must not be eligible: {detail}")
+    expect(detail.get("submission_allowed") is False, f"short single submission must be blocked: {detail}")
+    expect(bool(detail.get("reason")), f"short rejection missing reason: {detail}")
+    expect(bool(detail.get("next_step")), f"short rejection missing next_step: {detail}")
+    return detail
+
+
 def main() -> int:
     init_db()
     assert_frontend_uses_backend_only()
     with TestClient(app) as client:
-        single = run_train_case(
-            client,
-            voice_name=f"stage11_single_smoke_{int(time.time())}",
-            files=[UPLOADS / "train_c12177a47818.wav"],
-            expected_prepare_stage="train_preprocess",
-        )
+        short_rejection = assert_short_single_train_rejected(client)
         multi = run_train_case(
             client,
             voice_name=f"stage11_multi_smoke_{int(time.time())}",
             files=[UPLOADS / "train_e5790874eb1e.wav", UPLOADS / "train_def71bf124f9.wav"],
             expected_prepare_stage="train_direct_prepare",
         )
-    log(f"single ok -> {single['job']['job_id']}")
+    log(f"short single rejected -> {short_rejection.get('code')} / {short_rejection.get('material_profile')}")
     log(f"multi ok -> {multi['job']['job_id']}")
     log("stage11 verification PASS")
     return 0

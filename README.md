@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/28349879/README.md)
 # FeiShark Studio
 
 本地 AI 翻唱与音色训练工作台，围绕 `RVC` 构建，目标是把「训练自己的声音」和「用训练好的声音替换原唱」收口成一套可持续演进的本地产品。
@@ -102,20 +101,30 @@ cd D:\FeiSharkStudio-v2
 
 ## 常用验证
 
-后端主链验证：
+快速基础验收：
 
 ```powershell
+python -m pytest -q
 python -X utf8 backend\self_check.py
 python -X utf8 backend\smoke_stage9.py
 python -X utf8 backend\verify_stage11_train_flow.py
 ```
 
-浏览器验收脚本：
+真实素材重型验收：
 
 ```powershell
-node frontend\playwright_stage15_smoke.cjs
-node frontend\playwright_stage16_smoke.cjs
+python -X utf8 backend\verify_stage26_real_audio_training.py
 ```
+
+这条会依赖桌面真实长干声素材和本机 RVC 训练环境，主要用于确认 30-50 分钟单文件长干声训练链路，不是每轮轻量回归都必须跑。
+
+真实训练模型翻唱闭环验收：
+
+```powershell
+node frontend\playwright_trained_model_cover_studio_smoke.cjs
+```
+
+这条依赖正在运行的 `http://127.0.0.1:8000`、可用 RVC/AudioPipeline、已登记的真实训练模型和桌面真实源歌曲，用于确认 `Train -> Model Registry -> Cover -> Factory -> Studio` 闭环。
 
 ## 开发原则
 

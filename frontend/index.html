@@ -25,13 +25,54 @@
 
     <nav class="page-nav" aria-label="产品导航">
       <a class="page-nav-link is-active" href="/">Dashboard</a>
+      <a class="page-nav-link" href="/factory">Factory</a>
       <a class="page-nav-link" href="/studio">Studio</a>
     </nav>
 
     <div class="status-strip">
-      <div class="status-chip" id="engineChip">
-        <span class="dot warning"></span>
-        <span id="engineChipText">正在检测后端与 RVC 状态</span>
+      <div class="engine-entry" id="engineEntry">
+        <div class="status-chip" id="engineChip">
+          <span class="dot warning"></span>
+          <span id="engineChipText">正在检测后端与 RVC 状态</span>
+        </div>
+        <div class="engine-action-row">
+          <button class="ghost-btn engine-action-btn" id="engineOpenBtn" type="button" disabled>打开引擎</button>
+          <button class="ghost-btn engine-action-btn" id="engineCopyBtn" type="button" disabled>复制地址</button>
+          <button
+            class="ghost-btn engine-action-btn"
+            id="engineUsageToggleBtn"
+            type="button"
+            aria-controls="engineUsagePanel"
+            aria-expanded="false"
+          >查看用途 ▾</button>
+        </div>
+        <div class="engine-usage-panel" id="engineUsagePanel" hidden>
+          <div class="engine-usage-grid">
+            <div class="engine-usage-item">
+              <span class="engine-usage-label">引擎类型</span>
+              <strong id="engineKindText">本地 RVC 引擎</strong>
+            </div>
+            <div class="engine-usage-item">
+              <span class="engine-usage-label">引擎地址</span>
+              <div class="engine-usage-value mono" id="engineBaseUrlText" title="">-</div>
+            </div>
+            <div class="engine-usage-item">
+              <span class="engine-usage-label">翻唱推理</span>
+              <strong id="engineCoverModeText">RVC WebUI API / 本地兼容入口</strong>
+            </div>
+            <div class="engine-usage-item">
+              <span class="engine-usage-label">训练后端</span>
+              <strong id="engineTrainModeText">本地 RVC 脚本</strong>
+            </div>
+            <div class="engine-usage-item engine-usage-item-wide">
+              <span class="engine-usage-label">RVC 安装目录</span>
+              <div class="engine-usage-value mono" id="engineRootText" title="">-</div>
+            </div>
+          </div>
+          <div class="engine-usage-note" id="engineUsageNote">
+            工作台前端始终以 <code>http://127.0.0.1:8000/</code> 为主入口。当前 RVC 安装目录可能在仓库外，这是 v1 的设计现状，不是 bug。
+          </div>
+        </div>
       </div>
       <div class="summary-chip"><span class="summary-label">排队中</span><strong id="summaryPending">0</strong></div>
       <div class="summary-chip"><span class="summary-label">进行中</span><strong id="summaryProcessing">0</strong></div>
@@ -139,11 +180,15 @@
               <div class="detail-actions" id="jobActionBar"></div>
             </div>
 
-            <div class="detail-meta" id="jobMetaGrid">
-              <div class="meta-card empty">选中任务后，这里会显示状态、阶段、路径和错误摘要。</div>
+            <div class="detail-summary-card" id="jobSummaryCard">
+              <div class="detail-empty">选中任务后，这里会先告诉你这是什么任务、当前状态和下一步能做什么。</div>
             </div>
 
-            <div class="detail-section">
+            <div class="detail-meta detail-meta-product" id="jobMetaGrid">
+              <div class="meta-card empty">选中任务后，这里会显示核心信息、关键输入和当前输出摘要。</div>
+            </div>
+
+            <div class="detail-section detail-section-compact">
               <div class="detail-section-head">
                 <h4>关联数据集</h4>
               </div>
@@ -152,21 +197,66 @@
               </div>
             </div>
 
-            <div class="detail-section">
-              <div class="detail-section-head">
-                <h4>产物</h4>
+            <div class="detail-drawer" id="jobArtifactsDrawer" data-collapsed="true">
+              <div class="detail-section-head detail-drawer-head">
+                <div>
+                  <h4>产物</h4>
+                  <div class="detail-drawer-summary" id="jobArtifactsSummary">默认收起产物列表，避免多产物任务挤占详情区。</div>
+                </div>
+                <button
+                  class="ghost-btn drawer-toggle-btn"
+                  id="jobArtifactsToggleBtn"
+                  type="button"
+                  aria-controls="jobArtifactsBody"
+                  aria-expanded="false"
+                >展开产物 ▾</button>
               </div>
-              <div class="detail-list" id="jobArtifactsList">
-                <div class="detail-empty">当前还没有登记产物。</div>
+              <div class="detail-drawer-body" id="jobArtifactsBody" hidden>
+                <div class="detail-list" id="jobArtifactsList">
+                  <div class="detail-empty">当前还没有登记产物。</div>
+                </div>
               </div>
             </div>
 
-            <div class="detail-section">
-              <div class="detail-section-head">
-                <h4>阶段日志</h4>
+            <div class="detail-drawer" id="jobTechnicalDrawer" data-collapsed="true">
+              <div class="detail-section-head detail-drawer-head">
+                <div>
+                  <h4>技术详情</h4>
+                  <div class="detail-drawer-summary" id="jobTechnicalSummary">完整路径、原始错误和调试字段默认收纳在这里。</div>
+                </div>
+                <button
+                  class="ghost-btn drawer-toggle-btn"
+                  id="jobTechnicalToggleBtn"
+                  type="button"
+                  aria-controls="jobTechnicalBody"
+                  aria-expanded="false"
+                >展开技术详情 ▾</button>
               </div>
-              <div class="timeline" id="jobStageLogsList">
-                <div class="detail-empty">当前还没有阶段日志。</div>
+              <div class="detail-drawer-body" id="jobTechnicalBody" hidden>
+                <div class="detail-list" id="jobTechnicalList">
+                  <div class="detail-empty inline">当前没有可展示的技术详情。</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="detail-drawer" id="jobStageLogsDrawer" data-collapsed="true">
+              <div class="detail-section-head detail-drawer-head">
+                <div>
+                  <h4>阶段日志</h4>
+                  <div class="detail-drawer-summary" id="jobStageLogsSummary">默认收起完整 timeline，只保留最近阶段摘要。</div>
+                </div>
+                <button
+                  class="ghost-btn drawer-toggle-btn"
+                  id="jobStageLogsToggleBtn"
+                  type="button"
+                  aria-controls="jobStageLogsBody"
+                  aria-expanded="false"
+                >展开阶段日志 ▾</button>
+              </div>
+              <div class="detail-drawer-body" id="jobStageLogsBody" hidden>
+                <div class="timeline" id="jobStageLogsList">
+                  <div class="detail-empty">当前还没有阶段日志。</div>
+                </div>
               </div>
             </div>
           </aside>
@@ -207,7 +297,7 @@
           <article class="entry-card">
             <div class="entry-card-head">
               <h3>单文件训练</h3>
-              <p>适合长干声单文件，后端会进入 single_long_preprocess 流程。</p>
+              <p>适合 30-50 分钟单干声，后端会先验收时长，再决定是否进入 single_long_preprocess。</p>
             </div>
             <form id="singleTrainCreateForm" class="stack-form">
               <label>
@@ -221,14 +311,14 @@
               <div class="file-hint" id="singleTrainFileHint">尚未选择训练文件。</div>
               <div class="mode-chip" id="singleTrainModeChip">等待选择文件</div>
               <div class="availability-note train" id="singleTrainAvailabilityNote">请先选择训练文件和音色名称。</div>
-              <button class="primary-btn train" id="singleTrainCreateBtn" type="submit">创建 single train job</button>
+              <button class="primary-btn train" id="singleTrainCreateBtn" type="submit">创建单文件快速训练</button>
             </form>
           </article>
 
           <article class="entry-card">
             <div class="entry-card-head">
               <h3>多文件精训</h3>
-              <p>适合已经剪好的短素材，后端会直接进入 multi_clean_direct 流程。</p>
+              <p>适合已经剪好的短素材集合，后端会直接进入 multi_clean_direct 流程。</p>
             </div>
             <form id="multiTrainCreateForm" class="stack-form">
               <label>
@@ -242,7 +332,7 @@
               <div class="file-hint" id="multiTrainFilesHint">尚未选择训练文件。</div>
               <div class="mode-chip" id="multiTrainModeChip">等待选择文件</div>
               <div class="availability-note train" id="multiTrainAvailabilityNote">请先选择训练文件和音色名称。</div>
-              <button class="primary-btn train" id="multiTrainCreateBtn" type="submit">创建 multi train job</button>
+              <button class="primary-btn train" id="multiTrainCreateBtn" type="submit">创建多文件精训</button>
             </form>
           </article>
         </div>
@@ -295,7 +385,24 @@
           </form>
           <div class="availability-note" id="modelPanelNotice">如果列表里只有“已登记”但不是“可用”的模型，请先修正路径或重新扫描模型目录。</div>
         </div>
-        <div class="model-list" id="modelsList"></div>
+        <div class="inventory-drawer" id="modelsInventoryDrawer" data-collapsed="true">
+          <div class="inventory-drawer-head">
+            <div>
+              <strong>模型库存</strong>
+              <div class="inventory-drawer-summary" id="modelsInventorySummary">已登记 0 个 / 可用 0 个</div>
+            </div>
+            <button
+              class="ghost-btn drawer-toggle-btn"
+              id="modelsInventoryToggleBtn"
+              type="button"
+              aria-controls="modelsInventoryBody"
+              aria-expanded="false"
+            >展开模型库存 ▾</button>
+          </div>
+          <div class="inventory-drawer-body" id="modelsInventoryBody" hidden>
+            <div class="model-list" id="modelsList"></div>
+          </div>
+        </div>
         <div class="model-detail" id="modelDetailCard">
           <div class="detail-empty">点击一个模型即可查看详情。</div>
         </div>

@@ -1,8 +1,99 @@
 const toastRoot = () => document.getElementById("toastRoot");
 
+function getUiStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function engineKindLabel(engineKind = "") {
+  if (engineKind === "rvc_webui_local") return "本地 RVC 引擎";
+  return engineKind || "本地引擎";
+}
+
+function coverModeLabel(mode = "") {
+  if (mode === "webui_api_local_compat") return "RVC WebUI API / 本地兼容入口";
+  return mode || "RVC WebUI API / 本地兼容入口";
+}
+
+function trainModeLabel(mode = "") {
+  if (mode === "local_rvc_scripts") return "本地 RVC 脚本";
+  return mode || "本地 RVC 脚本";
+}
+
+export function setEngineSummary(engine = {}) {
+  const summary = {
+    online: Boolean(engine.online),
+    base_url: engine.base_url || "",
+    engine_kind: engine.engine_kind || "rvc_webui_local",
+    rvc_root: engine.rvc_root || "",
+    cover_inference_mode: engine.cover_inference_mode || "webui_api_local_compat",
+    train_backend_mode: engine.train_backend_mode || "local_rvc_scripts",
+  };
+
+  const chip = $("engineChip");
+  const text = $("engineChipText");
+  if (chip && text) {
+    const dot = chip.querySelector(".dot");
+    if (dot) dot.className = `dot ${summary.online ? "success" : "warning"}`;
+    text.textContent = summary.online
+      ? `RVC 在线 · ${summary.base_url || "兼容入口可用"}`
+      : `RVC 未在线 · ${summary.base_url || "等待本地兼容入口"}`;
+  }
+
+  const kind = $("engineKindText");
+  if (kind) kind.textContent = engineKindLabel(summary.engine_kind);
+
+  const base = $("engineBaseUrlText");
+  if (base) {
+    base.textContent = summary.base_url || "-";
+    base.title = summary.base_url || "";
+  }
+
+  const coverMode = $("engineCoverModeText");
+  if (coverMode) coverMode.textContent = coverModeLabel(summary.cover_inference_mode);
+
+  const trainMode = $("engineTrainModeText");
+  if (trainMode) trainMode.textContent = trainModeLabel(summary.train_backend_mode);
+
+  const root = $("engineRootText");
+  if (root) {
+    root.textContent = summary.rvc_root || "-";
+    root.title = summary.rvc_root || "";
+  }
+}
+
+export function loadUiState(key, fallback = null) {
+  const storage = getUiStorage();
+  if (!storage) return fallback;
+  try {
+    const raw = storage.getItem(key);
+    if (raw === null) return fallback;
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveUiState(key, value) {
+  const storage = getUiStorage();
+  if (!storage) return value;
+  try {
+    storage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage quota / privacy errors.
+  }
+  return value;
+}
+
 const STATUS_META = {
+  draft: { label: "草稿", className: "pending" },
   pending: { label: "排队中", className: "pending" },
   queued: { label: "排队中", className: "pending" },
+  imported: { label: "已导入", className: "pending" },
+  lyrics_ready: { label: "歌词就绪", className: "success" },
   processing: { label: "进行中", className: "active" },
   started: { label: "进行中", className: "active" },
   running: { label: "进行中", className: "active" },
@@ -70,6 +161,19 @@ const ARTIFACT_TYPE_META = {
   cover_transformed: "变声人声",
 };
 
+const MODEL_ORIGIN_META = {
+  trained_local: { label: "本地训练", className: "success" },
+  imported_external: { label: "外部导入", className: "pending" },
+  rescanned_local: { label: "目录扫描", className: "active" },
+};
+
+const MODEL_MATERIAL_META = {
+  single_long_candidate: "单文件长样本",
+  single_short_out_of_window: "单文件短样本",
+  single_long_out_of_window: "单文件超长样本",
+  multi_file_dataset: "多文件素材集",
+};
+
 export function $(id) {
   return document.getElementById(id);
 }
@@ -118,6 +222,14 @@ export function artifactTypeLabel(artifactType) {
   return ARTIFACT_TYPE_META[artifactType] || artifactType || "-";
 }
 
+export function modelOriginLabel(originKind) {
+  return MODEL_ORIGIN_META[originKind]?.label || originKind || "来源未标注";
+}
+
+export function modelMaterialProfileLabel(profile) {
+  return MODEL_MATERIAL_META[profile] || profile || "-";
+}
+
 export function modelAvailabilityText(model = {}) {
   if (model.usable) return "可用";
   if (model.exists) return "已登记";
@@ -151,6 +263,11 @@ export function renderStagePill(stage, status = "") {
 
 export function renderModelStatePill(model = {}) {
   return `<span class="status-pill ${modelAvailabilityClass(model)}">${escapeHtml(modelAvailabilityText(model))}</span>`;
+}
+
+export function renderModelOriginPill(originKind = "") {
+  const meta = MODEL_ORIGIN_META[originKind] || { label: originKind || "来源未标注", className: "pending" };
+  return `<span class="status-pill ${meta.className}">${escapeHtml(meta.label)}</span>`;
 }
 
 export function renderPathLine(value, { subtle = false, mono = true, emptyText = "-" } = {}) {

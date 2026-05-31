@@ -15,8 +15,12 @@ _STRATEGIES = {
 }
 
 
-def resolve_train_strategy(file_count: int) -> str:
-    return TrainSingleLongStrategy.strategy_key if file_count <= 1 else TrainMultiCleanStrategy.strategy_key
+def resolve_train_strategy(file_count: int, single_long_eligible: bool | None = None) -> str:
+    if file_count > 1:
+        return TrainMultiCleanStrategy.strategy_key
+    if single_long_eligible is False:
+        return TrainMultiCleanStrategy.strategy_key
+    return TrainSingleLongStrategy.strategy_key
 
 
 def get_strategy(strategy_key: str):

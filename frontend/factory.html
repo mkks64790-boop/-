@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FeiShark Studio Factory</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body data-page="factory">
+  <div class="ambient-bg" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand-block">
+      <div class="brand-mark">FS</div>
+      <div>
+        <p class="eyebrow">FeiShark Studio</p>
+        <h1>Release Factory</h1>
+        <p class="subtitle">批量导入曲目、整理歌词版本，并把单首 track 直接桥接到真实翻唱任务。</p>
+      </div>
+    </div>
+
+    <nav class="page-nav" aria-label="产品导航">
+      <a class="page-nav-link" href="/">Dashboard</a>
+      <a class="page-nav-link is-active" href="/factory">Factory</a>
+      <a class="page-nav-link" href="/studio">Studio</a>
+    </nav>
+
+    <div class="status-strip">
+      <div class="status-chip" id="factoryStatusChip">
+        <span class="dot warning" id="factoryStatusDot"></span>
+        <span id="factoryStatusText">正在加载 Factory 数据</span>
+      </div>
+      <div class="summary-chip"><span class="summary-label">批次</span><strong id="factoryBatchCount">0</strong></div>
+      <div class="summary-chip"><span class="summary-label">曲目</span><strong id="factoryTrackCount">0</strong></div>
+      <div class="summary-chip"><span class="summary-label">歌词</span><strong id="factoryLyricCount">0</strong></div>
+    </div>
+  </header>
+
+  <main class="factory-shell">
+    <section class="factory-main">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow accent">主区 · 批次中心</p>
+            <h2>先建批次，再导入曲目</h2>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn" id="factoryRefreshBtn" type="button">刷新 Factory</button>
+          </div>
+        </div>
+
+        <div class="factory-summary-grid">
+          <div class="detail-summary-card">
+            <div class="detail-summary-head">
+              <div class="detail-summary-head-copy">
+                <p class="detail-summary-eyebrow">批次入口</p>
+                <h3 class="detail-summary-title">创建一个新的发布批次</h3>
+                <p class="detail-summary-subline">批次负责收纳一组曲目和歌词工位，后续每首曲目都能继续进入真实任务流。</p>
+              </div>
+            </div>
+            <form id="factoryCreateBatchForm" class="stack-form">
+              <label>
+                <span>批次名称</span>
+                <input id="factoryBatchNameInput" type="text" placeholder="例如：2026 春季翻唱计划">
+              </label>
+              <label>
+                <span>目标平台</span>
+                <input id="factoryBatchPlatformsInput" type="text" placeholder="可选，逗号分隔，例如 douyin, bilibili, youtube">
+              </label>
+              <button class="primary-btn warm" type="submit">创建 batch</button>
+            </form>
+          </div>
+
+          <div class="factory-batch-list panel-soft" id="factoryBatchesDrawer" data-collapsed="false">
+            <div class="factory-section-head factory-section-head-drawer">
+              <div>
+                <h3>批次列表</h3>
+                <span id="factoryBatchHint">选择一个批次继续</span>
+              </div>
+              <button
+                class="ghost-btn drawer-toggle-btn"
+                id="factoryBatchesToggleBtn"
+                type="button"
+                aria-controls="factoryBatchesBody"
+                aria-expanded="true"
+              >收起批次 ▴</button>
+            </div>
+            <div id="factoryBatchesBody" class="factory-batches-body">
+              <div id="factoryBatchesList" class="factory-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow warm">次区 · 曲目导入</p>
+            <h2 id="factoryBatchTitle">尚未选择批次</h2>
+          </div>
+        </div>
+
+        <div class="factory-track-layout">
+          <div class="detail-summary-card">
+            <div class="detail-summary-head">
+              <div class="detail-summary-head-copy">
+                <p class="detail-summary-eyebrow">导入入口</p>
+                <h3 class="detail-summary-title">批量导入多首曲目</h3>
+                <p class="detail-summary-subline">支持一次上传多首音频，标题可先沿用文件名，后续再逐条修正。</p>
+              </div>
+            </div>
+
+            <form id="factoryImportTracksForm" class="stack-form">
+              <label>
+                <span>曲目文件</span>
+                <input id="factoryTrackFilesInput" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a" multiple>
+              </label>
+              <label>
+                <span>默认歌手</span>
+                <input id="factoryTrackArtistInput" type="text" placeholder="可选">
+              </label>
+              <label>
+                <span>导入备注</span>
+                <input id="factoryTrackNotesInput" type="text" placeholder="可选">
+              </label>
+              <label>
+                <span>标题列表</span>
+                <textarea id="factoryTrackTitlesInput" class="factory-textarea" rows="3" placeholder="可选，每行一个标题，顺序对应上传文件"></textarea>
+              </label>
+              <div class="panel-actions">
+                <button class="primary-btn warm" type="submit">导入 tracks</button>
+                <button class="ghost-btn" id="factoryReloadTracksBtn" type="button">刷新曲目</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="factory-track-list panel-soft">
+            <div class="factory-section-head">
+              <h3>曲目列表</h3>
+              <span id="factoryTrackHint">导入后在这里选择曲目</span>
+            </div>
+            <div id="factoryTracksList" class="factory-list"></div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <aside class="factory-side">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow accent">曲目工位</p>
+            <h2 id="factoryTrackTitle">请选择一个曲目</h2>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn" id="factoryReloadTrackBtn" type="button">刷新曲目</button>
+          </div>
+        </div>
+
+        <div class="detail-summary-card">
+          <div class="detail-summary-head">
+            <div class="detail-summary-head-copy">
+              <p class="detail-summary-eyebrow">当前曲目</p>
+              <h3 class="detail-summary-title" id="factoryTrackSubtitle">暂无载入曲目</h3>
+              <p class="detail-summary-subline" id="factoryTrackMeta">导入后点击曲目，继续处理歌词并发起真实任务。</p>
+            </div>
+          </div>
+          <div class="factory-mini-meta">
+            <span id="factoryTrackStatus"></span>
+            <span id="factoryTrackLyricState"></span>
+          </div>
+          <div class="factory-inline-path mono" id="factoryTrackPath">source path: -</div>
+        </div>
+
+        <div id="factoryTrackOutcomeCard" class="factory-outcome-card" hidden></div>
+
+        <div id="factoryCurrentMasterCard" class="detail-summary-card" hidden></div>
+
+        <div class="detail-drawer factory-drawer" id="factoryAssetDrawer" data-collapsed="false">
+          <div class="detail-section-head detail-drawer-head">
+            <div>
+              <h4>曲目资产</h4>
+              <div class="detail-drawer-summary" id="factoryAssetSummary">先选择一个曲目，再查看来源音频、当前状态和可执行动作。</div>
+            </div>
+            <button
+              class="ghost-btn drawer-toggle-btn"
+              id="factoryAssetToggleBtn"
+              type="button"
+              aria-expanded="true"
+            >收起曲目资产 ▴</button>
+          </div>
+          <div class="detail-drawer-body" id="factoryAssetBody">
+            <div id="factoryTrackAssetGrid" class="detail-meta"></div>
+
+            <div class="detail-section-compact">
+              <div class="detail-section-head">
+                <h4>翻唱任务</h4>
+              </div>
+              <div class="stack-form compact">
+                <label>
+                  <span>可用模型</span>
+                  <select id="factoryCoverModelSelect"></select>
+                </label>
+                <div class="panel-actions factory-toolbar">
+                  <button class="primary-btn warm" id="factoryCreateCoverJobBtn" type="button">创建翻唱任务</button>
+                </div>
+                <div class="detail-empty inline" id="factoryCoverJobHint">先选择曲目和可用模型，再直接从当前 track 发起 cover job。</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-drawer factory-drawer" id="factoryLyricsDrawer" data-collapsed="true">
+          <div class="detail-section-head detail-drawer-head">
+            <div>
+              <h4>歌词资产</h4>
+              <div class="detail-drawer-summary" id="factoryLyricsSummary">当前歌词文档、时间轴版本和草稿编辑会集中显示在这里。</div>
+            </div>
+            <button
+              class="ghost-btn drawer-toggle-btn"
+              id="factoryLyricsToggleBtn"
+              type="button"
+              aria-expanded="false"
+            >展开歌词资产 ▾</button>
+          </div>
+          <div class="detail-drawer-body" id="factoryLyricsBody" hidden>
+            <div id="factoryLyricsMetaGrid" class="detail-meta"></div>
+
+            <div class="detail-section-compact">
+              <div class="detail-section-head">
+                <h4>歌词草稿</h4>
+              </div>
+              <textarea id="factoryLyricText" class="factory-textarea" rows="12" placeholder="在这里编辑歌词草稿，或留空后直接生成占位草稿。"></textarea>
+              <div class="panel-actions factory-toolbar">
+                <button class="primary-btn warm" id="factoryExtractLyricsBtn" type="button">生成歌词草稿</button>
+                <button class="primary-btn" id="factoryAlignLyricsBtn" type="button">生成时间轴版本</button>
+              </div>
+            </div>
+
+            <div class="detail-section-compact">
+              <div class="detail-section-head">
+                <h4>歌词版本</h4>
+              </div>
+              <div id="factoryLyricVersions" class="factory-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-drawer factory-drawer" id="factoryJobsDrawer" data-collapsed="true">
+          <div class="detail-section-head detail-drawer-head">
+            <div>
+              <h4>关联任务</h4>
+              <div class="detail-drawer-summary" id="factoryTrackJobsSummary">当前还没有关联任务</div>
+            </div>
+            <button
+              class="ghost-btn drawer-toggle-btn"
+              id="factoryJobsToggleBtn"
+              type="button"
+              aria-expanded="false"
+            >展开关联任务 ▾</button>
+          </div>
+          <div class="detail-drawer-body" id="factoryJobsBody" hidden>
+            <div id="factoryTrackJobsList" class="factory-list"></div>
+
+            <div class="detail-section-compact">
+              <div class="detail-section-head">
+                <h4>审计记录</h4>
+              </div>
+              <div id="factoryAuditList" class="factory-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <div id="toastRoot" class="toast-root"></div>
+  <script type="module" src="/static/js/factory/main.js"></script>
+</body>
+</html>

@@ -52,6 +52,14 @@ export async function postJSON(path, body = {}) {
   });
 }
 
+export async function patchJSON(path, body = {}) {
+  return request(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function postForm(path, formData) {
   return request(path, {
     method: "POST",

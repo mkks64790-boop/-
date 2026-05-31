@@ -96,6 +96,47 @@ def check_frontend_artifact_download_binding() -> bool:
     return _print_result("frontend artifact download binding", len(missing) == 0, ", ".join(missing))
 
 
+def check_health_engine_summary(client: TestClient) -> bool:
+    status, data = _api_json(client, "/api/health")
+    if status != 200 or not isinstance(data, dict):
+        return _print_result("health engine summary", False, f"status={status}")
+
+    engine = data.get("engine") or data.get("rvc") or {}
+    required = {
+        "engine_kind",
+        "base_url",
+        "online",
+        "rvc_root",
+        "cover_inference_mode",
+        "train_backend_mode",
+    }
+    keys = set(engine.keys()) if isinstance(engine, dict) else set()
+    ok = isinstance(engine, dict) and required.issubset(keys)
+    return _print_result("health engine summary", ok, ",".join(sorted(required - keys)))
+
+
+def check_launcher_guard() -> bool:
+    launcher_path = Path(__file__).resolve().parents[1] / "feishark-launcher.ps1"
+    if not launcher_path.exists():
+        return _print_result("launcher guard", False, "missing launcher")
+
+    source = launcher_path.read_text(encoding="utf-8")
+    required_markers = [
+        "--noautoopen",
+        '$apiPort = 8000',
+        'Start-Process "http://127.0.0.1:$apiPort/"',
+    ]
+    missing = [marker for marker in required_markers if marker not in source]
+    wrong_target = 'Start-Process $rvcUrl' in source or 'http://127.0.0.1:7866/' in source
+    ok = not missing and not wrong_target
+    detail_parts = []
+    if missing:
+        detail_parts.append("missing=" + ",".join(missing))
+    if wrong_target:
+        detail_parts.append("browser_target_points_to_rvc")
+    return _print_result("launcher guard", ok, "; ".join(detail_parts))
+
+
 def _pick_any_job(conn) -> str | None:
     row = conn.execute(
         """
@@ -150,6 +191,7 @@ def _pick_train_job_with_model_artifacts(conn) -> str | None:
         WHERE j.job_type = 'train'
           AND ja.is_final = 1
           AND ja.artifact_type IN ('train_model_pth', 'train_model_index')
+          AND ja.file_size > 1024
         GROUP BY ja.job_id
         HAVING COUNT(DISTINCT ja.artifact_type) = 2
         ORDER BY MAX(datetime(ja.created_at)) DESC, MAX(ja.rowid) DESC
@@ -361,7 +403,9 @@ def check_train_preflight_structure(client: TestClient) -> bool:
     if resp.status_code != 200:
         return _print_result("train preflight structure", False, f"status={resp.status_code}")
     data = resp.json()
-    ok = bool(data.get("ok")) and not data.get("errors")
+    required = {"ok", "job_type", "strategy_key", "checks", "errors"}
+    new_fields = {"recommended_route", "material_profile", "submission_allowed"}
+    ok = bool(data.get("ok")) and not data.get("errors") and required.issubset(data.keys()) and new_fields.issubset(data.keys())
     return _print_result("train preflight structure", ok, str(data.get("errors", [])[:1]))
 
 
@@ -371,6 +415,29 @@ def check_train_environment_ready(client: TestClient) -> bool:
         return _print_result("train environment ready", False, f"status={resp.status_code}")
     data = resp.json()
     return _print_result("train environment ready", bool(data.get("ok")), str(data.get("errors", [])))
+
+
+def check_train_material_routing(client: TestClient) -> bool:
+    long_resp = client.get("/api/preflight/train?file_count=1&duration_seconds=2709.9951")
+    short_resp = client.get("/api/preflight/train?file_count=1&duration_seconds=932.702025")
+    if long_resp.status_code != 200 or short_resp.status_code != 200:
+        return _print_result("train material routing", False, f"long={long_resp.status_code}, short={short_resp.status_code}")
+
+    long_data = long_resp.json()
+    short_data = short_resp.json()
+    ok = (
+        long_data.get("single_long_eligible") is True
+        and long_data.get("recommended_route") == "single_long_preprocess"
+        and bool(long_data.get("submission_allowed"))
+        and short_data.get("single_long_eligible") is False
+        and short_data.get("recommended_route") == "multi_clean_direct"
+        and short_data.get("submission_allowed") is False
+    )
+    detail = (
+        f"long={long_data.get('material_profile')}/{long_data.get('recommended_route')} "
+        f"short={short_data.get('material_profile')}/{short_data.get('recommended_route')}"
+    )
+    return _print_result("train material routing", ok, detail)
 
 
 def check_cover_preflight_missing_model(client: TestClient) -> bool:
@@ -429,6 +496,8 @@ def main():
         check_frontend_model_selection_preservation(),
         check_frontend_refresh_guard(),
         check_frontend_artifact_download_binding(),
+        check_health_engine_summary(client),
+        check_launcher_guard(),
         check_models_structure(client),
         check_default_models_hide_smoke(client),
         check_model_detail_consistency(client),
@@ -441,6 +510,7 @@ def main():
 
     runtime_results = [
         check_train_environment_ready(client),
+        check_train_material_routing(client),
         check_cover_preflight_usable_model(client),
     ]
 

@@ -209,8 +209,10 @@ def register_trained_model(
 ) -> tuple[str, str]:
     try:
         from .db import add_voice_asset
+        from .services.model_service import build_trained_model_metadata
     except ImportError:
         from db import add_voice_asset
+        from services.model_service import build_trained_model_metadata
 
     pth_final, index_final = _move_train_artifacts(exp_name, model_id, voice_name)
     add_voice_asset(
@@ -220,6 +222,7 @@ def register_trained_model(
         index_path=index_final,
         default_pitch=0,
         source_job_id=source_job_id,
+        metadata=build_trained_model_metadata(source_job_id),
     )
     return pth_final, index_final
 
