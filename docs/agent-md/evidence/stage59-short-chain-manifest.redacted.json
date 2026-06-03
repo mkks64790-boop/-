@@ -1,0 +1,41 @@
+{
+  "schema_version": "stage59.short_chain.v1",
+  "generated_at": "2026-06-03T00:00:00",
+  "stage": "stage59",
+  "rights_policy": {
+    "require_license_approved": true,
+    "notes": "Only approved entries may be used by 59C/59D automation. Pending materials stay in manifest for audit."
+  },
+  "blocking_flags": {
+    "no_approved_entries": false,
+    "allow_blocked_entries_in_manifest": true
+  },
+  "entries": [
+    {
+      "id": "stage59_redacted_cover_source",
+      "material_id": "",
+      "source_path": "shared_data/materials/stage59/evidence/REDACTED_cover_source.wav",
+      "material_role": "cover_source",
+      "lifecycle_state": "active",
+      "intended_chain": ["preflight", "uvr_ab", "rvc_cover"],
+      "license_status": "approved",
+      "duration_seconds": 45.0,
+      "rights_blocked": false,
+      "quarantine_recommended": false,
+      "notes": "Redacted template — copy to shared_data/materials/stage59/short_chain_manifest.json and replace paths locally. Do not commit raw audio."
+    },
+    {
+      "id": "stage59_redacted_pending_dry_vocal",
+      "material_id": "",
+      "source_path": "shared_data/materials/stage59/evidence/REDACTED_dry_vocal.wav",
+      "material_role": "dry_vocal",
+      "lifecycle_state": "active",
+      "intended_chain": ["preflight"],
+      "license_status": "pending",
+      "duration_seconds": 30.0,
+      "rights_blocked": false,
+      "quarantine_recommended": false,
+      "notes": "Blocked by rights gate until license_status becomes approved."
+    }
+  ]
+}

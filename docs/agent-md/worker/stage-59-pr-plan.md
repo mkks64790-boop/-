@@ -3,7 +3,7 @@
 Date: 2026-06-03  
 Workspace: `D:\FeiSharkStudio-v2`  
 Author: FeiShark Studio 主控（Coordinator）  
-Status: **59A-lifecycle DONE**（138 pytest）；59B–59F 待排队
+Status: **59A-lifecycle DONE**；**59B-short-chain-manifest DONE**（154 pytest）；59C–59F 待排队
 
 ---
 
@@ -37,7 +37,7 @@ Stage59 **不**在单 PR 内做大规模物理删库/删盘；`purged` 状态先
 flowchart TD
     BASE[Stage58 merged baseline<br/>smoke_filter + merged hotfixes]
     A[59A-lifecycle<br/>DONE]
-    B[59B-short-chain-manifest]
+    B[59B-short-chain-manifest<br/>DONE]
     C[59C-uvr-ab]
     D[59D-rvc-fresh-cover]
     E[59E-router-split<br/>optional]
