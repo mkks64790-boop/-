@@ -140,6 +140,20 @@ def test_readiness_real_runner_blocked(client, isolated_backend):
     assert resp.json()["detail"]["real_execute_allowed"] is False
 
 
+def test_readiness_invalid_runner_mode_returns_422(client, isolated_backend):
+    manifest_rel = _install_redacted_manifest(isolated_backend)
+    resp = client.post(
+        "/api/stage59/short-chain/uvr-ab/readiness",
+        json={
+            "entry_id": "stage59_redacted_cover_source",
+            "manifest_path": manifest_rel,
+            "skip_file_exists": True,
+            "runner_mode": "bad",
+        },
+    )
+    assert resp.status_code == 422
+
+
 def test_execute_still_403(client):
     resp = client.post("/api/stage59/short-chain/uvr-ab/execute", json={})
     assert resp.status_code == 403

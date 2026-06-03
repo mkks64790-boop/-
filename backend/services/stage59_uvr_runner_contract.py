@@ -31,6 +31,7 @@ class RunnerMode(str, Enum):
 
 REAL_RUNNER_BLOCKED_REASON = "real_uvr_runner_requires_manual_approval"
 STAGE59C1_REAL_EXECUTE_BLOCKED = "real_execute_blocked_stage59c1"
+INVALID_RUNNER_MODE_REASON = "invalid_runner_mode"
 
 
 @dataclass
@@ -143,7 +144,10 @@ def build_runner_request(
     runner_mode: RunnerMode | str = RunnerMode.MOCK,
     check_file_exists: bool = True,
 ) -> UvrAbRunnerRequest:
-    mode = RunnerMode(runner_mode) if isinstance(runner_mode, str) else runner_mode
+    try:
+        mode = RunnerMode(runner_mode) if isinstance(runner_mode, str) else runner_mode
+    except ValueError as exc:
+        raise ValueError(INVALID_RUNNER_MODE_REASON) from exc
     safe_manifest = resolve_safe_manifest_path(manifest_path, project_root=project_root)
     return UvrAbRunnerRequest(
         entry_id=entry_id.strip(),
@@ -214,4 +218,8 @@ def evaluate_runner_readiness_from_paths(
         )
     except ManifestPathSafetyError as exc:
         return _blocked_payload(exc.reason)
+    except ValueError as exc:
+        if str(exc) == INVALID_RUNNER_MODE_REASON:
+            return _blocked_payload(INVALID_RUNNER_MODE_REASON, runner_mode=str(runner_mode))
+        raise
     return evaluate_runner_readiness(request)

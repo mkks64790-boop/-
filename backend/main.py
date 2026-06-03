@@ -27,7 +27,7 @@ import hashlib
 import traceback
 import sys
 import threading
-from typing import List
+from typing import List, Literal
 from urllib.parse import urlencode
 
 # 兼容模块内部继续使用 `from db import ...` 这类旧导入方式
@@ -747,7 +747,7 @@ class Stage59UvrAbReadinessRequest(BaseModel):
     manifest_path: str | None = None
     skip_file_exists: bool = False
     clip_seconds: int = 45
-    runner_mode: str = "mock"
+    runner_mode: Literal["mock", "real"] = "mock"
 
 
 class TrainingRecoveryRegisterRequest(BaseModel):

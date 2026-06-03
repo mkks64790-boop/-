@@ -11,6 +11,7 @@ import pytest
 
 from backend.services.short_chain_manifest_service import SCHEMA_VERSION
 from backend.services.stage59_uvr_runner_contract import (
+    INVALID_RUNNER_MODE_REASON,
     REAL_RUNNER_BLOCKED_REASON,
     MockUvrAbRunner,
     RealUvrAbRunnerAdapter,
@@ -103,6 +104,23 @@ def test_real_runner_always_blocked(project_root: Path):
     assert result["ok"] is False
     assert result["blocked_reason"] == REAL_RUNNER_BLOCKED_REASON
     assert result["requires_manual_approval"] is True
+
+
+def test_invalid_runner_mode_blocked(project_root: Path):
+    rel = "shared_data/materials/stage59/source.wav"
+    manifest = _base_manifest()
+    manifest["entries"] = [_entry("sc59_uvr", rel)]
+    manifest_path = _write_manifest(project_root, manifest)
+
+    result = evaluate_runner_readiness_from_paths(
+        "sc59_uvr",
+        manifest_path,
+        project_root=project_root,
+        runner_mode="bad",
+        check_file_exists=False,
+    )
+    assert result["ok"] is False
+    assert result["blocked_reason"] == INVALID_RUNNER_MODE_REASON
 
 
 def test_non_whitelisted_entry_blocked(project_root: Path):
