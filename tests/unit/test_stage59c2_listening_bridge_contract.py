@@ -13,16 +13,26 @@ from backend.services.stage59_listening_bridge_service import (
 
 def _sample_records() -> list[dict]:
     entry_id = "sc59_entry"
+    run_id = "stage59c2_test_run"
+    base = f"shared_data/stage59_runtime/{run_id}"
     return [
         {
-            "artifact_id": f"stage59c2_{entry_id}_uvr_vocal",
+            "artifact_id": f"stage59_{entry_id}_uvr_vocal",
             "artifact_type": "uvr_vocal",
-            "planned_path": f"shared_data/separation_eval/stage59/{entry_id}/uvr_vocal.wav",
+            "planned_path": f"{base}/uvr_vocal.wav",
+            "lifecycle_state": "transient",
+            "file_exists": False,
+            "metadata_only": True,
+            "promotable_to_job_artifact": False,
         },
         {
-            "artifact_id": f"stage59c2_{entry_id}_uvr_instrumental",
+            "artifact_id": f"stage59_{entry_id}_uvr_instrumental",
             "artifact_type": "uvr_instrumental",
-            "planned_path": f"shared_data/separation_eval/stage59/{entry_id}/uvr_instrumental.wav",
+            "planned_path": f"{base}/uvr_instrumental.wav",
+            "lifecycle_state": "transient",
+            "file_exists": False,
+            "metadata_only": True,
+            "promotable_to_job_artifact": False,
         },
     ]
 
@@ -43,4 +53,8 @@ def test_listening_contract_stage49_compatible_shape():
     assert "a_source" in contract["sides"]
     assert "b_uvr_vocal" in contract["sides"]
     assert contract["sides"]["b_uvr_vocal"]["file_exists"] is False
+    assert contract["sides"]["b_uvr_vocal"]["can_play"] is False
+    assert contract["sides"]["b_uvr_vocal"]["reason"] == "metadata_only_artifact"
+    assert "artifact_ref" in contract["sides"]["b_uvr_vocal"]
+    assert contract["sides"]["b_uvr_vocal"]["artifact_ref"]["artifact_id"].startswith("stage59_")
     assert len(contract["ab_pairs"]) >= 1

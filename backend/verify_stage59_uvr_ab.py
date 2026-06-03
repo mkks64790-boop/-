@@ -4,7 +4,8 @@ Stage59C-0/59C-1 verifier — short-chain UVR A/B dry-run and readiness harness.
 
 Default: dry-run PASS without UVR/RVC/GPU/subprocess.
 --readiness: mock runner contract (metadata-only artifacts).
---mock-execute: 59C-2 transient artifact + listening bridge (metadata-only).
+--mock-execute: 59C-2/4a transient artifact + persistence contract (metadata-only).
+--artifact-contract: with --mock-execute, print persistence contract fields.
 --approval-preflight: 59C-3 approval gate (real execute still blocked).
 --execute and --runner real: blocked in this stage.
 """
@@ -89,6 +90,11 @@ def main(argv: list[str] | None = None) -> int:
         "--mock-execute",
         action="store_true",
         help="59C-2 mock execute + transient artifact metadata (no audio files)",
+    )
+    parser.add_argument(
+        "--artifact-contract",
+        action="store_true",
+        help="With --mock-execute: include persistence-ready artifact contract output",
     )
     parser.add_argument(
         "--approval-preflight",
@@ -446,6 +452,7 @@ def _run_mock_execute(
         )
         return 1
 
+    contract = result.get("artifact_persistence_contract") or {}
     payload = {
         "status": "PASS",
         "mode": "mock_execute",
@@ -455,6 +462,7 @@ def _run_mock_execute(
         "run_id": result.get("run_id"),
         "mock_execute": result,
         "artifact_records": result.get("artifact_records"),
+        "artifact_persistence_contract": contract,
         "listening_contract": result.get("listening_contract"),
         "real_execute_allowed": False,
         "audio_files_written": False,
@@ -470,6 +478,16 @@ def _run_mock_execute(
         print(f"run_id={result.get('run_id')}")
         records = result.get("artifact_records") or []
         print(f"artifact_records={len(records)}")
+        if args.artifact_contract:
+            print("artifact_contract:")
+            for art in contract.get("artifacts") or records:
+                print(
+                    f"  id={art.get('artifact_id')} lifecycle={art.get('lifecycle_state')} "
+                    f"metadata_only={art.get('metadata_only')} file_exists={art.get('file_exists')} "
+                    f"playback_enabled={art.get('playback_enabled')}"
+                )
+            promo = result.get("promotion_plan") or {}
+            print(f"promotion_can_promote={promo.get('can_promote', False)}")
         print("STAGE59_UVR_AB PASS")
     return 0
 

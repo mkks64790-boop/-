@@ -94,7 +94,14 @@ def test_mock_execute_redacted_manifest(client, isolated_backend):
         f"/api/stage59/short-chain/uvr-ab/mock-execute/{run_id}/listening-contract"
     )
     assert contract_resp.status_code == 200
-    assert contract_resp.json()["listening_contract"]["schema"] == "stage59_uvr_listening_bridge_v1"
+    assert contract_resp.json()["listening_contract"]["schema"] == "stage59_uvr_listening_bridge_v2"
+    art_resp = client.get(
+        f"/api/stage59/short-chain/uvr-ab/mock-execute/{run_id}/artifact-contract"
+    )
+    assert art_resp.status_code == 200
+    bundle = art_resp.json()["artifact_persistence_contract"]
+    assert bundle["metadata_only"] is True
+    assert bundle["file_exists"] is False
 
 
 def test_mock_execute_pending_blocked(client, isolated_backend):

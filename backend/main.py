@@ -171,7 +171,10 @@ try:
         plan_short_chain_uvr,
     )
     from .services.stage59_listening_bridge_service import get_listening_contract_for_run
-    from .services.stage59_transient_artifact_service import get_transient_run
+    from .services.stage59_transient_artifact_service import (
+        get_artifact_contract_for_run,
+        get_transient_run,
+    )
     from .services.stage59_execution_policy_service import (
         REAL_RUNNER_NOT_ENABLED_REASON,
         evaluate_execution_policy,
@@ -304,7 +307,10 @@ except ImportError:
         plan_short_chain_uvr,
     )
     from services.stage59_listening_bridge_service import get_listening_contract_for_run
-    from services.stage59_transient_artifact_service import get_transient_run
+    from services.stage59_transient_artifact_service import (
+        get_artifact_contract_for_run,
+        get_transient_run,
+    )
     from services.stage59_execution_policy_service import (
         REAL_RUNNER_NOT_ENABLED_REASON,
         evaluate_execution_policy,
@@ -1816,7 +1822,8 @@ async def post_separation_eval_run_disabled():
 @app.get("/api/stage59/short-chain/uvr-ab/contract", summary="Stage59C UVR A/B contract (dry-run + readiness)")
 async def get_stage59_uvr_ab_contract():
     return {
-        "stage": "stage59c3",
+        "stage": "stage59c4a",
+        "artifact_contract_supported": True,
         "mode_default": "dry_run",
         "supported_modes": [
             "dry_run",
@@ -1853,6 +1860,10 @@ async def get_stage59_uvr_ab_contract():
         "mock_execute_cli": (
             "python backend\\verify_stage59_uvr_ab.py --mock-execute --entry-id <id> "
             "--manifest <allowed-path> --skip-file-exists"
+        ),
+        "artifact_contract_cli": (
+            "python backend\\verify_stage59_uvr_ab.py --mock-execute --artifact-contract "
+            "--entry-id <id> --manifest <allowed-path> --skip-file-exists"
         ),
         "approval_preflight_cli": (
             "python backend\\verify_stage59_uvr_ab.py --approval-preflight --entry-id <id> "
@@ -1972,6 +1983,29 @@ async def get_stage59_uvr_mock_execute_listening_contract(run_id: str):
         "listening_contract": contract,
         "real_execute_allowed": False,
         "playback_enabled": False,
+    }
+
+
+@app.get(
+    "/api/stage59/short-chain/uvr-ab/mock-execute/{run_id}/artifact-contract",
+    summary="Stage59C-4a persistence-ready artifact contract for mock execute run",
+)
+async def get_stage59_uvr_mock_execute_artifact_contract(run_id: str):
+    contract = get_artifact_contract_for_run(run_id)
+    if contract is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"ok": False, "reason": "artifact_contract_not_found"},
+        )
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "artifact_persistence_contract": contract,
+        "real_execute_allowed": False,
+        "metadata_only": contract.get("metadata_only", True),
+        "file_exists": contract.get("file_exists", False),
+        "playback_enabled": False,
+        "download_enabled": False,
     }
 
 

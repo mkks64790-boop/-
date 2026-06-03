@@ -1,13 +1,35 @@
 """
-Stage59C-2 — Stage49-compatible listening A/B bridge for mock UVR execute.
+Stage59C-2/4a — Stage49-compatible listening A/B bridge for mock UVR execute.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-LISTENING_BRIDGE_SCHEMA = "stage59_uvr_listening_bridge_v1"
+from backend.services.stage59_artifact_persistence_service import CONTRACT_SCHEMA
+
+LISTENING_BRIDGE_SCHEMA = "stage59_uvr_listening_bridge_v2"
 STAGE49_COMPATIBLE_SCHEMA = "stage49_listening_review_v1"
+METADATA_ONLY_REASON = "metadata_only_artifact"
+
+
+def _artifact_ref(record: dict[str, Any], *, run_id: str) -> dict[str, Any]:
+    return {
+        "artifact_id": record.get("artifact_id", ""),
+        "run_id": run_id,
+        "persistence_schema": CONTRACT_SCHEMA,
+        "artifact_type": record.get("artifact_type", ""),
+        "lifecycle_state": record.get("lifecycle_state", "transient"),
+    }
+
+
+def _job_artifact_ref(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_id": None,
+        "artifact_id": None,
+        "promotable": bool(record.get("promotable_to_job_artifact")),
+        "requires_file_exists": True,
+    }
 
 
 def build_listening_contract(
@@ -17,11 +39,42 @@ def build_listening_contract(
     source_path: str,
     artifact_records: list[dict[str, Any]],
     clip_seconds: int,
+    artifact_persistence_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Metadata-only A/B contract: source vs planned vocal/instrumental stems."""
+    """Metadata-only A/B contract: stable artifact ids; not playable until files exist."""
     by_type = {str(item["artifact_type"]): item for item in artifact_records}
 
     def _side(key: str, artifact_type: str, *, role: str) -> dict[str, Any]:
+        if role == "source":
+            return {
+                "side_key": key,
+                "role": role,
+                "artifact_id": f"stage59_{entry_id.replace(' ', '_')}_cover_source",
+                "artifact_type": "cover_source",
+                "planned_path": source_path,
+                "source_path": source_path,
+                "artifact_ref": {
+                    "artifact_id": f"stage59_{entry_id.replace(' ', '_')}_cover_source",
+                    "run_id": run_id,
+                    "persistence_schema": CONTRACT_SCHEMA,
+                    "artifact_type": "cover_source",
+                    "lifecycle_state": "transient",
+                },
+                "job_artifact_ref": {
+                    "job_id": None,
+                    "artifact_id": None,
+                    "promotable": False,
+                    "requires_file_exists": True,
+                },
+                "can_play": False,
+                "can_review": False,
+                "reason": METADATA_ONLY_REASON,
+                "playback_enabled": False,
+                "download_enabled": False,
+                "file_exists": False,
+                "metadata_only": True,
+            }
+
         record = by_type.get(artifact_type, {})
         return {
             "side_key": key,
@@ -29,10 +82,15 @@ def build_listening_contract(
             "artifact_id": record.get("artifact_id", ""),
             "artifact_type": artifact_type,
             "planned_path": record.get("planned_path", ""),
-            "source_path": source_path if role == "source" else record.get("planned_path", ""),
+            "source_path": record.get("planned_path", ""),
+            "artifact_ref": _artifact_ref(record, run_id=run_id),
+            "job_artifact_ref": _job_artifact_ref(record),
+            "can_play": False,
+            "can_review": False,
+            "reason": METADATA_ONLY_REASON,
             "playback_enabled": False,
             "download_enabled": False,
-            "file_exists": False,
+            "file_exists": bool(record.get("file_exists")),
             "metadata_only": True,
         }
 
@@ -45,9 +103,6 @@ def build_listening_contract(
             role="uvr_instrumental",
         ),
     }
-    sides["a_source"]["source_path"] = source_path
-    sides["a_source"]["artifact_type"] = "cover_source"
-    sides["a_source"]["planned_path"] = source_path
 
     return {
         "schema": LISTENING_BRIDGE_SCHEMA,
@@ -60,6 +115,8 @@ def build_listening_contract(
         "real_execute_allowed": False,
         "real_execute_required": True,
         "review_allowed": False,
+        "artifact_persistence_schema": CONTRACT_SCHEMA,
+        "artifact_persistence_contract": artifact_persistence_contract,
         "sides": sides,
         "ab_pairs": [
             {
@@ -76,7 +133,7 @@ def build_listening_contract(
             },
         ],
         "next_action": "requires_real_uvr_execute",
-        "notes": "Stage59C-2 mock execute: metadata-only; no audio on disk.",
+        "notes": "Stage59C-4a: metadata-only persistence contract; no audio on disk.",
     }
 
 
@@ -92,4 +149,5 @@ def get_listening_contract_for_run(run_payload: dict[str, Any]) -> dict[str, Any
         source_path=str(run_payload.get("source_path") or ""),
         artifact_records=list(run_payload.get("artifact_records") or []),
         clip_seconds=int(run_payload.get("clip_seconds") or 45),
+        artifact_persistence_contract=run_payload.get("artifact_persistence_contract"),
     )

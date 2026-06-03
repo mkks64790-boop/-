@@ -1,5 +1,5 @@
 """
-Stage59C-2 — mock UVR execute bridge (readiness → transient artifacts → listening contract).
+Stage59C-2/4a — mock UVR execute bridge (readiness → persistence contract → listening).
 """
 
 from __future__ import annotations
@@ -10,10 +10,10 @@ from typing import Any
 
 from backend.services.short_chain_manifest_service import resolve_safe_manifest_path
 from backend.services.short_chain_uvr_service import evaluate_uvr_ab_readiness
+from backend.services.stage59_artifact_persistence_service import STAGE_LABEL
 from backend.services.stage59_listening_bridge_service import build_listening_contract
 from backend.services.stage59_transient_artifact_service import (
     REQUIRES_LATER_DB_INTEGRATION,
-    STAGE_LABEL,
     attach_listening_contract,
     register_transient_uvr_artifacts,
 )
@@ -47,7 +47,7 @@ def mock_execute_uvr_ab(
     """
     Mock execute after Stage59C-1 readiness passes.
 
-    No UVR subprocess, no audio files, no DB rows (in-memory contract only).
+    No UVR subprocess, no audio files, no DB rows (persistence contract only).
     """
     readiness = evaluate_uvr_ab_readiness(
         entry_id,
@@ -62,7 +62,7 @@ def mock_execute_uvr_ab(
 
     plan = readiness.get("plan") or {}
     source_path = str(plan.get("source_path") or "")
-    safe_run_id = run_id or f"stage59c2_{entry_id}_{uuid.uuid4().hex[:8]}"
+    safe_run_id = run_id or f"stage59_{entry_id}_{uuid.uuid4().hex[:8]}"
     manifest_resolved = resolve_safe_manifest_path(manifest_path, project_root=project_root)
     manifest_str = str(manifest_resolved)
 
@@ -73,12 +73,19 @@ def mock_execute_uvr_ab(
         clip_seconds=clip_seconds,
         manifest_path=manifest_str,
     )
+    from backend.services.stage59_transient_artifact_service import get_transient_run
+
+    run_snapshot = get_transient_run(safe_run_id) or {}
+    persistence_contract = run_snapshot.get("artifact_persistence_contract")
+    promotion_plan = run_snapshot.get("promotion_plan")
+
     listening_contract = build_listening_contract(
         run_id=safe_run_id,
         entry_id=entry_id,
         source_path=source_path,
         artifact_records=artifact_records,
         clip_seconds=clip_seconds,
+        artifact_persistence_contract=persistence_contract,
     )
 
     attach_listening_contract(safe_run_id, listening_contract)
@@ -97,6 +104,8 @@ def mock_execute_uvr_ab(
         "manifest_path": manifest_str,
         "clip_seconds": clip_seconds,
         "artifact_records": artifact_records,
+        "artifact_persistence_contract": persistence_contract,
+        "promotion_plan": promotion_plan,
         "listening_contract": listening_contract,
         "readiness": readiness,
         "requires_later_db_integration": REQUIRES_LATER_DB_INTEGRATION,

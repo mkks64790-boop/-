@@ -35,7 +35,8 @@ def test_register_transient_artifacts_metadata_only(tmp_path: Path):
         assert item["file_exists"] is False
         assert item["playback_enabled"] is False
         assert item["download_enabled"] is False
-        assert item["artifact_id"].startswith("stage59c2_sc59_entry_")
+        assert item["artifact_id"].startswith("stage59_sc59_entry_")
+        assert "stage59_runtime" in item["planned_path"]
         assert not (tmp_path / item["planned_path"]).exists()
 
     run = get_transient_run("stage59c2_test_run")

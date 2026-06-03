@@ -1,27 +1,31 @@
 """
-Stage59C-2 — in-memory transient UVR artifact metadata (no physical files).
+Stage59C-2/4a — run-scoped UVR artifact metadata (persistence-ready; no physical files).
 
-``register_job_artifact`` requires ``os.path.exists``; Stage59 mock execute uses this
-JSON contract store until a later DB integration stage.
+Delegates contract shape to ``stage59_artifact_persistence_service``. In-memory store until
+real smoke files exist and ``register_job_artifact`` can run.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-STAGE_LABEL = "stage59c2"
-REQUIRES_LATER_DB_INTEGRATION = True
+from backend.services.stage59_artifact_persistence_service import (
+    REQUIRES_LATER_DB_INTEGRATION as ARTIFACTS_REQUIRE_LATER_DB_INTEGRATION,
+    STAGE_LABEL,
+    build_mock_uvr_artifact_contracts,
+    build_run_persistence_bundle,
+    clear_persistence_store,
+    get_run_artifact_contract,
+    store_run_artifact_contract,
+)
+from backend.services.stage59_job_artifact_promotion_service import (
+    build_job_artifact_promotion_plan,
+)
+
+STAGE_LABEL_C2 = "stage59c2"
+REQUIRES_LATER_DB_INTEGRATION = ARTIFACTS_REQUIRE_LATER_DB_INTEGRATION
 
 _RUN_STORE: dict[str, dict[str, Any]] = {}
-
-
-def _artifact_id(entry_id: str, artifact_type: str) -> str:
-    safe_entry = entry_id.replace(" ", "_").replace("/", "_")
-    return f"stage59c2_{safe_entry}_{artifact_type}"
-
-
-def _planned_path(entry_id: str, artifact_type: str) -> str:
-    return f"shared_data/separation_eval/stage59/{entry_id}/{artifact_type}.wav"
 
 
 def register_transient_uvr_artifacts(
@@ -33,25 +37,17 @@ def register_transient_uvr_artifacts(
     manifest_path: str,
 ) -> list[dict[str, Any]]:
     """Register metadata-only transient artifacts; does not touch disk."""
-    records: list[dict[str, Any]] = []
-    for artifact_type in ("uvr_vocal", "uvr_instrumental"):
-        records.append(
-            {
-                "artifact_id": _artifact_id(entry_id, artifact_type),
-                "run_id": run_id,
-                "artifact_type": artifact_type,
-                "lifecycle_state": "transient",
-                "planned_path": _planned_path(entry_id, artifact_type),
-                "source_path": source_path,
-                "material_entry_id": entry_id,
-                "clip_seconds": clip_seconds,
-                "file_exists": False,
-                "metadata_only": True,
-                "playback_enabled": False,
-                "download_enabled": False,
-                "requires_later_db_integration": REQUIRES_LATER_DB_INTEGRATION,
-            }
-        )
+    records = build_mock_uvr_artifact_contracts(run_id=run_id, entry_id=entry_id)
+    bundle = build_run_persistence_bundle(
+        run_id=run_id,
+        entry_id=entry_id,
+        artifact_records=records,
+    )
+    promotion_plan = build_job_artifact_promotion_plan(
+        job_id=None,
+        artifact_contract=bundle,
+    )
+    store_run_artifact_contract(run_id, bundle)
 
     _RUN_STORE[run_id] = {
         "run_id": run_id,
@@ -61,6 +57,8 @@ def register_transient_uvr_artifacts(
         "manifest_path": manifest_path,
         "clip_seconds": clip_seconds,
         "artifact_records": records,
+        "artifact_persistence_contract": bundle,
+        "promotion_plan": promotion_plan,
         "audio_files_written": False,
         "listening_contract": None,
     }
@@ -79,6 +77,13 @@ def get_transient_run(run_id: str) -> dict[str, Any] | None:
     return dict(payload)
 
 
+def get_artifact_contract_for_run(run_id: str) -> dict[str, Any] | None:
+    run = get_transient_run(run_id)
+    if run and run.get("artifact_persistence_contract"):
+        return dict(run["artifact_persistence_contract"])
+    return get_run_artifact_contract(run_id)
+
+
 def list_transient_artifact_records(run_id: str) -> list[dict[str, Any]]:
     run = get_transient_run(run_id)
     if run is None:
@@ -89,3 +94,4 @@ def list_transient_artifact_records(run_id: str) -> list[dict[str, Any]]:
 def clear_transient_store() -> None:
     """Test helper — reset in-memory store."""
     _RUN_STORE.clear()
+    clear_persistence_store()
