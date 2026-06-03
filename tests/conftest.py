@@ -32,6 +32,7 @@ def _patch_backend_paths(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
     monkeypatch.setattr(backend_main, "OUTPUT_ROOT", str(shared_root / "outputs"), raising=False)
     monkeypatch.setattr(backend_main, "DATASET_DIR", str(shared_root / "datasets"), raising=False)
     monkeypatch.setattr(backend_main, "WEIGHTS_DIR", str(shared_root / "weights"), raising=False)
+    monkeypatch.setattr(backend_main, "PROJECT_ROOT", str(root), raising=False)
 
 
 @pytest.fixture()

@@ -22,7 +22,9 @@ try:
         RVC_LOGS_DIR,
         RVC_PYTHON,
         RVC_WEBUI_DIR,
+        TRAIN_GPUS,
     )
+    from ..services.training_gpu_service import get_training_gpu_status
     from ..db import PROJECT_ROOT
 except ImportError:
     from services.model_service import get_voice_model, resolve_voice_model_file
@@ -39,7 +41,9 @@ except ImportError:
         RVC_LOGS_DIR,
         RVC_PYTHON,
         RVC_WEBUI_DIR,
+        TRAIN_GPUS,
     )
+    from services.training_gpu_service import get_training_gpu_status
     from db import PROJECT_ROOT
 
 
@@ -228,6 +232,28 @@ def _check_meta(check_name: str) -> dict:
             "needs_external_fix": False,
         },
     }
+    mapping.update(
+        {
+            "train_gpu_nvidia_smi": {
+                "category": "gpu",
+                "label": "NVIDIA GPU 检测",
+                "next_step": "确认 NVIDIA 驱动和 nvidia-smi 可用。",
+                "needs_external_fix": True,
+            },
+            "train_gpu_torch_cuda": {
+                "category": "gpu",
+                "label": "RVC Torch CUDA",
+                "next_step": "确认 RVC Python 中的 torch 是 CUDA 版本，并且 torch.cuda.is_available() 为 true。",
+                "needs_external_fix": True,
+            },
+            "train_gpu_selection": {
+                "category": "gpu",
+                "label": "训练 GPU 选择",
+                "next_step": "确认 FEISHARK_RVC_GPUS 指向存在的 GPU 编号，例如 0。",
+                "needs_external_fix": True,
+            },
+        }
+    )
     return mapping.get(
         check_name,
         {
@@ -311,6 +337,11 @@ def _probe_cover_model_loadability(model_id: str, resolved_path: str, index_path
 
 
 def run_train_preflight(strategy_key: str, material_decision: dict | None = None) -> dict:
+    gpu_status = get_training_gpu_status(
+        rvc_python=RVC_PYTHON,
+        rvc_webui_dir=RVC_WEBUI_DIR,
+        train_gpus=TRAIN_GPUS,
+    )
     env_checks = _enrich_checks([
         _check_path("rvc_root", RVC_WEBUI_DIR, "dir"),
         _check_path("rvc_python", RVC_PYTHON, "file"),
@@ -326,6 +357,7 @@ def run_train_preflight(strategy_key: str, material_decision: dict | None = None
         _check_python_import(RVC_PYTHON, "fairseq", cwd=RVC_WEBUI_DIR),
         _check_python_import(RVC_PYTHON, "faiss", cwd=RVC_WEBUI_DIR),
         _check_python_import(RVC_PYTHON, "sklearn", cwd=RVC_WEBUI_DIR),
+        *gpu_status["checks"],
     ])
     checks = list(env_checks)
     if material_decision:
@@ -355,8 +387,11 @@ def run_train_preflight(strategy_key: str, material_decision: dict | None = None
         "recommended_route": material_decision.get("recommended_route") if material_decision else strategy_key,
         "single_long_eligible": material_decision.get("single_long_eligible") if material_decision else None,
         "reason": material_decision.get("reason") if material_decision else "",
-        "next_step": material_decision.get("next_step") if material_decision else "",
+        "next_step": material_decision.get("next_step") if material_decision else gpu_status.get("next_step", ""),
         "material_decision": material_decision or None,
+        "gpu_status": gpu_status,
+        "gpu_acceleration_available": bool(gpu_status.get("acceleration_available")),
+        "device_mode": gpu_status.get("device_mode") or "",
         "checks": checks,
         "errors": [c for c in checks if not c["ok"]],
     }

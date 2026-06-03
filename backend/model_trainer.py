@@ -10,6 +10,11 @@ import uuid
 from pathlib import Path
 from random import shuffle
 
+try:
+    from .services.training_tuning_service import build_rvc_train_runtime_options
+except ImportError:
+    from services.training_tuning_service import build_rvc_train_runtime_options
+
 
 def _pick_first_existing(*paths: str) -> str:
     for path in paths:
@@ -60,7 +65,7 @@ TRAIN_PITCH_GUIDE = os.environ.get("FEISHARK_RVC_TRAIN_PITCH_GUIDE", "true").low
 }
 SAVE_EVERY_EPOCH = int(os.environ.get("FEISHARK_RVC_SAVE_EVERY_EPOCH", "10"))
 SAVE_EVERY_WEIGHTS = os.environ.get("FEISHARK_RVC_SAVE_EVERY_WEIGHTS", "1")
-TRAIN_TIMEOUT = int(os.environ.get("FEISHARK_RVC_TRAIN_TIMEOUT", "3600"))
+TRAIN_TIMEOUT = int(os.environ.get("FEISHARK_RVC_TRAIN_TIMEOUT", "21600"))
 TRAIN_INDEX_TIMEOUT = int(os.environ.get("FEISHARK_RVC_INDEX_TIMEOUT", "1800"))
 RVC_IS_HALF = os.environ.get("FEISHARK_RVC_IS_HALF", "False")
 TRAIN_FP16_OVERRIDE = os.environ.get("FEISHARK_RVC_TRAIN_FP16", "").strip().lower()
@@ -169,35 +174,38 @@ def _run_dataset_training(task_id: str, voice_name: str, dataset_folder: str, st
         return {"success": False, "error": err}
 
 
-def prepare_single_long_preprocess_dataset(dataset_folder: str, exp_name: str) -> int:
+def prepare_single_long_preprocess_dataset(dataset_folder: str, exp_name: str, training_config: dict | None = None) -> int:
     _ensure_rvc_training_support_files()
-    _run_native_preprocess(dataset_folder, exp_name)
+    _run_native_preprocess(dataset_folder, exp_name, training_config=training_config)
     return _count_training_samples(exp_name)
 
 
-def prepare_multi_clean_direct_dataset(dataset_folder: str, exp_name: str) -> int:
+def prepare_multi_clean_direct_dataset(dataset_folder: str, exp_name: str, training_config: dict | None = None) -> int:
     _ensure_rvc_training_support_files()
     source_files = _collect_audio_files(dataset_folder)
     if not source_files:
         raise RuntimeError("dataset directory has no supported audio files")
-    _prepare_direct_trainset(source_files, exp_name)
+    _prepare_direct_trainset(source_files, exp_name, training_config=training_config)
     return _count_training_samples(exp_name)
 
 
-def run_training_pitch_extract(exp_name: str) -> None:
-    _run_pitch_extraction(exp_name)
+def run_training_pitch_extract(exp_name: str, training_config: dict | None = None) -> None:
+    _run_pitch_extraction(exp_name, training_config=training_config)
 
 
-def run_training_feature_extract(exp_name: str) -> None:
+def run_training_feature_extract(exp_name: str, training_config: dict | None = None) -> None:
     _run_feature_extraction(exp_name)
 
 
-def run_training_core(exp_name: str) -> None:
-    _prepare_rvc_experiment(exp_name)
-    _run_training_script(exp_name)
+def run_training_core(exp_name: str, training_config: dict | None = None) -> None:
+    _prepare_rvc_experiment(exp_name, training_config=training_config)
+    _run_training_script(exp_name, training_config=training_config)
 
 
-def run_training_index(exp_name: str) -> None:
+def run_training_index(exp_name: str, training_config: dict | None = None) -> None:
+    options = _runtime_options(training_config)
+    if not options["index_enabled"]:
+        return
     _run_index_extraction(exp_name)
 
 
@@ -206,6 +214,8 @@ def register_trained_model(
     model_id: str,
     voice_name: str,
     source_job_id: str = "",
+    *,
+    training_config: dict | None = None,
 ) -> tuple[str, str]:
     try:
         from .db import add_voice_asset
@@ -214,7 +224,13 @@ def register_trained_model(
         from db import add_voice_asset
         from services.model_service import build_trained_model_metadata
 
-    pth_final, index_final = _move_train_artifacts(exp_name, model_id, voice_name)
+    options = _runtime_options(training_config)
+    pth_final, index_final = _move_train_artifacts(
+        exp_name,
+        model_id,
+        voice_name,
+        require_index=options["index_enabled"],
+    )
     add_voice_asset(
         model_id=model_id,
         model_name=voice_name,
@@ -236,7 +252,8 @@ def _collect_audio_files(dataset_folder: str) -> list[str]:
     return [path for path in files if os.path.isfile(path)]
 
 
-def _run_native_preprocess(dataset_folder: str, exp_name: str) -> None:
+def _run_native_preprocess(dataset_folder: str, exp_name: str, training_config: dict | None = None) -> None:
+    options = _runtime_options(training_config)
     preprocess_script = os.path.join(RVC_WEBUI_DIR, "infer", "modules", "train", "preprocess.py")
     if not os.path.exists(preprocess_script):
         raise FileNotFoundError(f"RVC preprocess script missing: {preprocess_script}")
@@ -247,7 +264,7 @@ def _run_native_preprocess(dataset_folder: str, exp_name: str) -> None:
         RVC_PYTHON,
         preprocess_script,
         dataset_folder,
-        TRAIN_SR.replace("k", "000"),
+        _sample_rate_hz(options),
         str(TRAIN_PREPROCESS_THREADS),
         exp_dir,
         "True",
@@ -256,7 +273,8 @@ def _run_native_preprocess(dataset_folder: str, exp_name: str) -> None:
     _run_rvc_command(cmd, timeout=900, label="train/preprocess")
 
 
-def _prepare_direct_trainset(source_files: list[str], exp_name: str) -> None:
+def _prepare_direct_trainset(source_files: list[str], exp_name: str, training_config: dict | None = None) -> None:
+    options = _runtime_options(training_config)
     gt_dir, wav16k_dir = _ensure_train_dirs(exp_name)
     for index, src in enumerate(source_files):
         stem = f"{index:04d}_0"
@@ -274,7 +292,7 @@ def _prepare_direct_trainset(source_files: list[str], exp_name: str) -> None:
                 "-ac",
                 "1",
                 "-ar",
-                "40000",
+                _sample_rate_hz(options),
                 gt_path,
             ],
             timeout=600,
@@ -317,8 +335,9 @@ def _count_training_samples(exp_name: str) -> int:
     return sum(1 for name in os.listdir(gt_dir) if name.lower().endswith(".wav"))
 
 
-def _run_pitch_extraction(exp_name: str) -> None:
-    if not TRAIN_PITCH_GUIDE:
+def _run_pitch_extraction(exp_name: str, training_config: dict | None = None) -> None:
+    options = _runtime_options(training_config)
+    if not options["f0_enabled"]:
         return
 
     exp_dir = os.path.join(RVC_LOGS_DIR, exp_name)
@@ -356,7 +375,8 @@ def _run_feature_extraction(exp_name: str) -> None:
     )
 
 
-def _prepare_rvc_experiment(exp_name: str) -> None:
+def _prepare_rvc_experiment(exp_name: str, training_config: dict | None = None) -> None:
+    options = _runtime_options(training_config)
     exp_dir = os.path.join(RVC_LOGS_DIR, exp_name)
     gt_wavs_dir = os.path.join(exp_dir, "0_gt_wavs")
     feature_dir = os.path.join(exp_dir, "3_feature768" if TRAIN_VERSION == "v2" else "3_feature256")
@@ -376,7 +396,7 @@ def _prepare_rvc_experiment(exp_name: str) -> None:
         stem = os.path.splitext(wav_name)[0]
         wav_path = os.path.join(gt_wavs_dir, wav_name).replace("\\", "\\\\")
         feature_path = os.path.join(feature_dir, f"{stem}.npy").replace("\\", "\\\\")
-        if TRAIN_PITCH_GUIDE:
+        if options["f0_enabled"]:
             f0_path = os.path.join(f0_dir, f"{wav_name}.npy").replace("\\", "\\\\")
             f0nsf_path = os.path.join(f0nsf_dir, f"{wav_name}.npy").replace("\\", "\\\\")
             if not (os.path.exists(f0_path.replace("\\\\", "\\")) and os.path.exists(f0nsf_path.replace("\\\\", "\\"))):
@@ -388,10 +408,10 @@ def _prepare_rvc_experiment(exp_name: str) -> None:
     if not entries:
         raise RuntimeError("training filelist is empty after preprocess/feature extraction")
 
-    mute_sr = TRAIN_SR
+    mute_sr = options["sample_rate"]
     mute_feature_dir = "3_feature768" if TRAIN_VERSION == "v2" else "3_feature256"
     for _ in range(2):
-        if TRAIN_PITCH_GUIDE:
+        if options["f0_enabled"]:
             entries.append(
                 f"{os.path.join(RVC_MUTE_DIR, '0_gt_wavs', f'mute{mute_sr}.wav').replace('\\', '\\\\')}"
                 f"|{os.path.join(RVC_MUTE_DIR, mute_feature_dir, 'mute.npy').replace('\\', '\\\\')}"
@@ -410,7 +430,7 @@ def _prepare_rvc_experiment(exp_name: str) -> None:
     with open(filelist_path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(entries))
 
-    config_key = "v1/40k.json" if TRAIN_SR == "40k" else f"{TRAIN_VERSION}/{TRAIN_SR}.json"
+    config_key = "v1/40k.json" if options["sample_rate"] == "40k" else f"{TRAIN_VERSION}/{options['sample_rate']}.json"
     config_src = os.path.join(RVC_CONFIGS_DIR, config_key.replace("/", os.sep))
     config_dest = os.path.join(exp_dir, "config.json")
     if not os.path.exists(config_src):
@@ -427,7 +447,8 @@ def _prepare_rvc_experiment(exp_name: str) -> None:
             dst_handle.write("\n")
 
 
-def _run_training_script(exp_name: str) -> None:
+def _run_training_script(exp_name: str, training_config: dict | None = None) -> None:
+    options = _runtime_options(training_config)
     train_script = os.path.join(RVC_WEBUI_DIR, "infer", "modules", "train", "train.py")
     if not os.path.exists(train_script):
         raise FileNotFoundError(f"RVC train.py missing: {train_script}")
@@ -438,17 +459,17 @@ def _run_training_script(exp_name: str) -> None:
         "-se",
         str(SAVE_EVERY_EPOCH),
         "-te",
-        str(TRAIN_EPOCHS),
+        str(options["epochs"]),
         "-bs",
-        str(TRAIN_BATCH_SIZE),
+        str(options["batch_size"]),
         "-e",
         exp_name,
         "-sr",
-        TRAIN_SR,
+        options["sample_rate"],
         "-v",
         TRAIN_VERSION,
         "-f0",
-        "1" if TRAIN_PITCH_GUIDE else "0",
+        "1" if options["f0_enabled"] else "0",
         "-l",
         "1",
         "-c",
@@ -456,14 +477,20 @@ def _run_training_script(exp_name: str) -> None:
         "-sw",
         SAVE_EVERY_WEIGHTS,
     ]
-    pretrain_g, pretrain_d = _get_pretrained_models()
+    pretrain_g, pretrain_d = _get_pretrained_models(training_config=training_config)
     if pretrain_g:
         cmd.extend(["-pg", pretrain_g])
     if pretrain_d:
         cmd.extend(["-pd", pretrain_d])
     if TRAIN_GPUS:
         cmd.extend(["-g", TRAIN_GPUS])
-    _run_rvc_command(cmd, timeout=TRAIN_TIMEOUT, label="train/core", success_codes={0, 2333333})
+    _run_rvc_command(
+        cmd,
+        timeout=TRAIN_TIMEOUT,
+        label="train/core",
+        success_codes={0, 2333333},
+        exp_name=exp_name,
+    )
 
 
 def _run_index_extraction(exp_name: str) -> None:
@@ -556,7 +583,7 @@ print(added_index_path)
     _run_rvc_command([RVC_PYTHON, "-c", script], timeout=TRAIN_INDEX_TIMEOUT, label="train/index")
 
 
-def _move_train_artifacts(exp_name: str, model_id: str, voice_name: str) -> tuple[str, str]:
+def _move_train_artifacts(exp_name: str, model_id: str, voice_name: str, *, require_index: bool = True) -> tuple[str, str]:
     del model_id
 
     logs_dir = os.path.join(RVC_LOGS_DIR, exp_name)
@@ -579,22 +606,24 @@ def _move_train_artifacts(exp_name: str, model_id: str, voice_name: str) -> tupl
 
     if not pth_src:
         raise FileNotFoundError(f"trained .pth not found for experiment: {exp_name}")
-    if not index_src:
+    if require_index and not index_src:
         raise FileNotFoundError(f"trained .index not found for experiment: {exp_name}")
-    if os.path.getsize(index_src) <= 12:
+    if require_index and os.path.getsize(index_src) <= 12:
         raise RuntimeError(f"index artifact is still an empty shell: {index_src}")
 
     pth_dest = os.path.join(WEIGHTS_DIR, f"{voice_name}.pth")
     index_dest = os.path.join(WEIGHTS_DIR, f"{voice_name}.index")
     shutil.copy2(pth_src, pth_dest)
-    shutil.copy2(index_src, index_dest)
+    if index_src:
+        shutil.copy2(index_src, index_dest)
 
     _sync_artifact_to_rvc_runtime(pth_dest, os.path.join(RVC_WEBUI_DIR, "assets", "weights"))
-    _sync_artifact_to_rvc_runtime(index_dest, os.path.join(RVC_WEBUI_DIR, "assets", "indices"))
+    if index_src:
+        _sync_artifact_to_rvc_runtime(index_dest, os.path.join(RVC_WEBUI_DIR, "assets", "indices"))
 
     return (
         f"shared_data/weights/{voice_name}.pth",
-        f"shared_data/weights/{voice_name}.index",
+        f"shared_data/weights/{voice_name}.index" if index_src else "",
     )
 
 
@@ -617,12 +646,73 @@ def _find_first_artifact(root: str, suffix: str, excluded_prefixes: tuple[str, .
     return None
 
 
-def _get_pretrained_models() -> tuple[str, str]:
+def _get_pretrained_models(training_config: dict | None = None) -> tuple[str, str]:
+    options = _runtime_options(training_config)
     path_suffix = "" if TRAIN_VERSION == "v1" else "_v2"
-    f0_prefix = "f0" if TRAIN_PITCH_GUIDE else ""
-    g_path = os.path.join(RVC_WEBUI_DIR, "assets", f"pretrained{path_suffix}", f"{f0_prefix}G{TRAIN_SR}.pth")
-    d_path = os.path.join(RVC_WEBUI_DIR, "assets", f"pretrained{path_suffix}", f"{f0_prefix}D{TRAIN_SR}.pth")
+    f0_prefix = "f0" if options["f0_enabled"] else ""
+    g_path = os.path.join(RVC_WEBUI_DIR, "assets", f"pretrained{path_suffix}", f"{f0_prefix}G{options['sample_rate']}.pth")
+    d_path = os.path.join(RVC_WEBUI_DIR, "assets", f"pretrained{path_suffix}", f"{f0_prefix}D{options['sample_rate']}.pth")
     return (g_path if os.path.exists(g_path) else "", d_path if os.path.exists(d_path) else "")
+
+
+def build_training_command_preview(exp_name: str, training_config: dict | None = None) -> dict:
+    options = _runtime_options(training_config)
+    train_script = os.path.join(RVC_WEBUI_DIR, "infer", "modules", "train", "train.py")
+    cmd = [
+        RVC_PYTHON,
+        train_script,
+        "-se",
+        str(SAVE_EVERY_EPOCH),
+        "-te",
+        str(options["epochs"]),
+        "-bs",
+        str(options["batch_size"]),
+        "-e",
+        exp_name,
+        "-sr",
+        options["sample_rate"],
+        "-v",
+        TRAIN_VERSION,
+        "-f0",
+        "1" if options["f0_enabled"] else "0",
+        "-l",
+        "1",
+        "-c",
+        "0",
+        "-sw",
+        SAVE_EVERY_WEIGHTS,
+    ]
+    pretrain_g, pretrain_d = _get_pretrained_models(training_config=training_config)
+    if pretrain_g:
+        cmd.extend(["-pg", pretrain_g])
+    if pretrain_d:
+        cmd.extend(["-pd", pretrain_d])
+    if TRAIN_GPUS:
+        cmd.extend(["-g", TRAIN_GPUS])
+    return {
+        "exp_name": exp_name,
+        "cmd": cmd,
+        "training_config": options["training_config"],
+        "epochs": options["epochs"],
+        "batch_size": options["batch_size"],
+        "sample_rate": options["sample_rate"],
+        "f0_enabled": options["f0_enabled"],
+        "index_enabled": options["index_enabled"],
+        "starts_train_py": False,
+    }
+
+
+def _runtime_options(training_config: dict | None = None) -> dict:
+    try:
+        return build_rvc_train_runtime_options(training_config or {})
+    except ValueError as exc:
+        options = build_rvc_train_runtime_options({"preset_key": "balanced"})
+        options["training_config"].setdefault("warnings", []).append(f"invalid runtime training_config fallback: {exc}")
+        return options
+
+
+def _sample_rate_hz(options: dict) -> str:
+    return str(options["sample_rate"]).replace("k", "000")
 
 
 def _run_rvc_command(
@@ -630,6 +720,7 @@ def _run_rvc_command(
     timeout: int,
     label: str,
     success_codes: set[int] | None = None,
+    exp_name: str = "",
 ) -> None:
     print(f"[{label}] {' '.join(cmd)}")
     env = os.environ.copy()
@@ -639,16 +730,42 @@ def _run_rvc_command(
         python_path_parts.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
 
-    proc = subprocess.run(
-        cmd,
-        cwd=RVC_WEBUI_DIR,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        env=env,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=RVC_WEBUI_DIR,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            env=env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        if label == "train/core":
+            try:
+                from .services.training_runtime_guard import build_train_core_timeout_error, inspect_training_checkpoint
+            except ImportError:
+                from services.training_runtime_guard import build_train_core_timeout_error, inspect_training_checkpoint
+
+            raw_error = "\n".join(
+                part.decode("utf-8", errors="replace") if isinstance(part, bytes) else str(part or "")
+                for part in (exc.stderr, exc.stdout)
+                if part
+            )
+            raise build_train_core_timeout_error(
+                exp_name=exp_name,
+                timeout_seconds=timeout,
+                cmd=cmd,
+                raw_error=raw_error,
+                checkpoint=inspect_training_checkpoint(
+                    exp_name,
+                    rvc_logs_dir=RVC_LOGS_DIR,
+                    rvc_webui_dir=RVC_WEBUI_DIR,
+                    train_version=TRAIN_VERSION,
+                ),
+            ) from exc
+        raise
     allowed = success_codes or {0}
     if proc.returncode not in allowed:
         detail = (proc.stderr or "")[-5000:] or (proc.stdout or "")[-5000:] or f"{label} failed with exit code {proc.returncode}"
@@ -662,7 +779,24 @@ def _pick_gpu_id() -> str:
 
 
 def _has_cuda() -> bool:
-    return shutil.which("nvidia-smi") is not None
+    try:
+        from .services.training_gpu_service import get_training_gpu_status
+    except ImportError:
+        try:
+            from services.training_gpu_service import get_training_gpu_status
+        except ImportError:
+            return shutil.which("nvidia-smi") is not None
+
+    try:
+        status = get_training_gpu_status(
+            rvc_python=RVC_PYTHON,
+            rvc_webui_dir=RVC_WEBUI_DIR,
+            train_gpus=TRAIN_GPUS,
+            timeout=20,
+        )
+        return bool(status.get("acceleration_available"))
+    except Exception:
+        return shutil.which("nvidia-smi") is not None
 
 
 def _ensure_rvc_training_support_files() -> None:

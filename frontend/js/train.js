@@ -2,6 +2,44 @@ import { getJSON, postForm, toErrorMessage } from "./api.js";
 import { $, formatBytes, showToast } from "./ui.js";
 import { summarizeTrainIssue } from "./diagnostics.js";
 
+const TRAINING_PRESET_STORAGE_KEY = "feishark.training-preset-key";
+const TRAINING_PRESET_ORDER = ["fast_preview", "balanced", "quality"];
+const TRAINING_PRESET_FALLBACKS = {
+  fast_preview: {
+    preset_key: "fast_preview",
+    label: "快速预览",
+    epochs: 30,
+    batch_size: 6,
+    sample_rate: "40k",
+    f0_enabled: true,
+    index_enabled: true,
+    gpu_risk_label: "低",
+    estimated_runtime_label: "较短，适合先确认音色方向",
+  },
+  balanced: {
+    preset_key: "balanced",
+    label: "均衡推荐",
+    epochs: 90,
+    batch_size: 8,
+    sample_rate: "40k",
+    f0_enabled: true,
+    index_enabled: true,
+    gpu_risk_label: "中",
+    estimated_runtime_label: "中等，适合大多数本地训练",
+  },
+  quality: {
+    preset_key: "quality",
+    label: "高质量慢速",
+    epochs: 150,
+    batch_size: 6,
+    sample_rate: "40k",
+    f0_enabled: true,
+    index_enabled: true,
+    gpu_risk_label: "高",
+    estimated_runtime_label: "较长，请确认 GPU 空闲和散热稳定",
+  },
+};
+
 const FORM_CONFIGS = {
   single: {
     defaultFileCount: 1,
@@ -32,7 +70,140 @@ const FORM_CONFIGS = {
 const state = {
   single: { files: [], preflight: null, preview: null, loading: false },
   multi: { files: [], preflight: null, preview: null, loading: false },
+  presets: Object.values(TRAINING_PRESET_FALLBACKS),
+  selectedPresetKey: "balanced",
+  presetsUnavailable: "",
 };
+
+function normalizePreset(raw = {}) {
+  const key = raw.preset_key || raw.key || raw.name || "";
+  return {
+    ...raw,
+    preset_key: key,
+    label: raw.label || TRAINING_PRESET_FALLBACKS[key]?.label || key || "训练预设",
+    epochs: raw.epochs ?? TRAINING_PRESET_FALLBACKS[key]?.epochs ?? 90,
+    batch_size: raw.batch_size ?? TRAINING_PRESET_FALLBACKS[key]?.batch_size ?? 8,
+    sample_rate: raw.sample_rate ?? TRAINING_PRESET_FALLBACKS[key]?.sample_rate ?? "40k",
+    f0_enabled: raw.f0_enabled ?? raw.f0 ?? TRAINING_PRESET_FALLBACKS[key]?.f0_enabled ?? true,
+    index_enabled: raw.index_enabled ?? raw.index ?? TRAINING_PRESET_FALLBACKS[key]?.index_enabled ?? true,
+    gpu_risk_label: raw.gpu_risk_label || raw.gpu_risk || TRAINING_PRESET_FALLBACKS[key]?.gpu_risk_label || "中",
+    estimated_runtime_label: raw.estimated_runtime_label || raw.estimated_runtime || TRAINING_PRESET_FALLBACKS[key]?.estimated_runtime_label || "中等",
+  };
+}
+
+function normalizePresetPayload(payload = null) {
+  const items = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.items)
+      ? payload.items
+      : Array.isArray(payload?.presets)
+        ? payload.presets
+        : [];
+  const normalized = items.map(normalizePreset).filter(item => item.preset_key);
+  const byKey = new Map(Object.values(TRAINING_PRESET_FALLBACKS).map(item => [item.preset_key, normalizePreset(item)]));
+  normalized.forEach(item => byKey.set(item.preset_key, item));
+  return TRAINING_PRESET_ORDER.map(key => byKey.get(key)).filter(Boolean);
+}
+
+function getStoredPresetKey() {
+  try {
+    const value = window.localStorage.getItem(TRAINING_PRESET_STORAGE_KEY);
+    return TRAINING_PRESET_ORDER.includes(value) ? value : "balanced";
+  } catch {
+    return "balanced";
+  }
+}
+
+function savePresetKey(key) {
+  state.selectedPresetKey = TRAINING_PRESET_ORDER.includes(key) ? key : "balanced";
+  try {
+    window.localStorage.setItem(TRAINING_PRESET_STORAGE_KEY, state.selectedPresetKey);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function getSelectedPreset() {
+  return state.presets.find(item => item.preset_key === state.selectedPresetKey)
+    || TRAINING_PRESET_FALLBACKS.balanced;
+}
+
+function buildTrainingConfig(kind) {
+  const preset = getSelectedPreset();
+  return {
+    preset_key: preset.preset_key,
+    epochs: Number(preset.epochs),
+    batch_size: Number(preset.batch_size),
+    sample_rate: String(preset.sample_rate || "40k"),
+    f0_enabled: Boolean(preset.f0_enabled),
+    index_enabled: Boolean(preset.index_enabled),
+    gpu_risk_label: preset.gpu_risk_label || "中",
+    estimated_runtime_label: preset.estimated_runtime_label || "中等",
+    source: "product_ui",
+    entry_kind: kind,
+  };
+}
+
+function gpuStatusLabel(preflight = null) {
+  const status = preflight?.gpu_status || preflight || null;
+  if (!status) return "GPU 加速: 等待训练预检";
+  const available = status.gpu_acceleration_available ?? status.acceleration_available ?? preflight?.gpu_acceleration_available;
+  const deviceMode = status.device_mode || preflight?.device_mode || "";
+  const devices = status.torch_cuda?.devices || status.nvidia_smi?.gpus?.map(item => item.name) || [];
+  if (available) {
+    return `GPU 加速: 可用 (${deviceMode || "cuda"}${devices.length ? ` · ${devices[0]}` : ""})`;
+  }
+  const firstError = (status.errors || preflight?.errors || []).find(item => item.check?.startsWith?.("train_gpu"))
+    || (status.errors || preflight?.errors || [])[0]
+    || null;
+  return `GPU 加速: 未就绪${firstError?.detail ? ` · ${firstError.detail}` : ""}`;
+}
+
+function trainingConfigSummary(config, preflight = null) {
+  return [
+    `Preset: ${config.preset_key}`,
+    `Epochs: ${config.epochs}`,
+    `Batch: ${config.batch_size}`,
+    `Sample Rate: ${config.sample_rate}`,
+    `F0: ${config.f0_enabled ? "on" : "off"}`,
+    `Index: ${config.index_enabled ? "on" : "off"}`,
+    `GPU 风险: ${config.gpu_risk_label}`,
+    gpuStatusLabel(preflight),
+    `预计耗时: ${config.estimated_runtime_label}`,
+  ].join("\n");
+}
+
+function renderDashboardTrainingPresetSummary() {
+  const root = $("dashboardTrainingPresetSummary");
+  if (!root) return;
+  const config = buildTrainingConfig("dashboard");
+  root.innerHTML = `
+    <div class="training-config-summary-compact">
+      <div>
+        <strong>${config.preset_key}</strong>
+        <span>${config.epochs} epochs · batch ${config.batch_size} · ${config.sample_rate} · GPU ${config.gpu_risk_label}</span>
+      </div>
+      <a class="ghost-btn drawer-toggle-btn" href="/factory#factoryTrainingTuningPanel">去 Factory 调参</a>
+    </div>
+    ${state.presetsUnavailable ? `<div class="training-config-note">${state.presetsUnavailable}</div>` : ""}
+  `;
+}
+
+async function loadTrainingPresets() {
+  state.selectedPresetKey = getStoredPresetKey();
+  try {
+    const payload = await getJSON("/api/training/presets");
+    state.presets = normalizePresetPayload(payload);
+    state.presetsUnavailable = "";
+  } catch (error) {
+    state.presets = Object.values(TRAINING_PRESET_FALLBACKS).map(normalizePreset);
+    state.presetsUnavailable = "训练预设接口暂不可用，当前使用产品侧默认配置。";
+  }
+  if (!state.presets.some(item => item.preset_key === state.selectedPresetKey)) {
+    savePresetKey("balanced");
+  }
+  renderDashboardTrainingPresetSummary();
+}
 
 function getFormState(kind) {
   return state[kind];
@@ -212,12 +383,12 @@ function renderAvailability(kind) {
   }
 
   if (!preflight.ok) {
-    note.textContent = `训练环境未通过：${summarizeTrainIssue({ train_preflight: preflight })}。${preflight.next_step || ""}`;
+    note.textContent = `训练环境未通过：${summarizeTrainIssue({ train_preflight: preflight })}。${gpuStatusLabel(preflight)}。${preflight.next_step || ""}`;
     note.className = "availability-note warn";
     return;
   }
 
-  note.textContent = `${preflight.reason || "训练素材验收通过。"} 将进入 ${preflight.recommended_route || config.strategyLabel}。`;
+  note.textContent = `${preflight.reason || "训练素材验收通过。"} ${gpuStatusLabel(preflight)}。将进入 ${preflight.recommended_route || config.strategyLabel}。`;
   note.className = "availability-note success";
 }
 
@@ -277,13 +448,23 @@ async function handleSubmit(kind, onJobCreated) {
   }
 
   const form = new FormData();
+  const trainingConfig = buildTrainingConfig(kind);
+  const confirmed = window.confirm(`确认创建训练任务？\n\n${trainingConfigSummary(trainingConfig, formState.preflight)}\n\n这会提交训练 job，但不会自动提交 cover。`);
+  if (!confirmed) return;
+
   form.append("voice_name", voiceName);
+  form.append("training_config_json", JSON.stringify(trainingConfig));
+  form.append("training_config", JSON.stringify(trainingConfig));
+  form.append("preset_key", trainingConfig.preset_key);
   files.forEach(file => form.append("files", file));
 
   try {
     const created = await postForm("/api/train", form);
     const route = created.recommended_route || created.strategy_key || config.strategyLabel;
-    showToast(`${config.entryLabel}任务已创建：${created.task_id} · ${route}`, "success");
+    showToast(
+      `训练已启动：${created.task_id} · ${route}。核心训练阶段可能较久，请不要关闭 RVC / 后端 / 当前训练进程；可在任务详情查看阶段路线图。`,
+      "success",
+    );
     onJobCreated?.(created.task_id);
   } catch (error) {
     showToast(`${config.entryLabel}创建失败：${toErrorMessage(error)}`, "error");
@@ -336,8 +517,24 @@ function bindForm(kind, onJobCreated) {
 }
 
 export function initTrainCreate(onJobCreated) {
+  $("singleTrainCreateForm")?.closest(".entry-card")?.querySelector("h3")?.replaceChildren("单文件快速训练");
+  $("multiTrainCreateForm")?.closest(".entry-card")?.querySelector("h3")?.replaceChildren("多文件批量精训");
+  $("singleTrainCreateBtn").textContent = "创建单文件快速训练";
+  $("multiTrainCreateBtn").textContent = "创建多文件批量精训";
+
+  void loadTrainingPresets();
   bindForm("single", onJobCreated);
   bindForm("multi", onJobCreated);
+  window.addEventListener("storage", event => {
+    if (event.key === TRAINING_PRESET_STORAGE_KEY) {
+      state.selectedPresetKey = getStoredPresetKey();
+      renderDashboardTrainingPresetSummary();
+    }
+  });
+  document.addEventListener("feishark:training-preset-changed", () => {
+    state.selectedPresetKey = getStoredPresetKey();
+    renderDashboardTrainingPresetSummary();
+  });
 }
 
 export async function syncTrainAvailability() {

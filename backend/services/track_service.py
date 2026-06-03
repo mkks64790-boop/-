@@ -7,11 +7,13 @@ try:
     from ..db import get_connection
     from .asset_service import get_final_job_artifact, get_job_artifact
     from .audit_service import record_audit_event
+    from .smoke_filter import explain_test_data_filter_reason, is_test_data_track_record
     from .stage_log_service import list_stage_logs
 except ImportError:
     from db import get_connection
     from services.asset_service import get_final_job_artifact, get_job_artifact
     from services.audit_service import record_audit_event
+    from services.smoke_filter import explain_test_data_filter_reason, is_test_data_track_record
     from services.stage_log_service import list_stage_logs
 
 
@@ -149,6 +151,13 @@ def _canonical_track_job_stage(job_row: dict, stage_logs: list[dict] | None = No
         return ""
 
     status = job_row.get("status") or ""
+    metadata = _parse_json(job_row.get("metadata_json"), {})
+    if (
+        (job_row.get("job_type") or "") == "train"
+        and status in {"完成", "已完成", "completed"}
+        and (metadata.get("recovered_from_checkpoint") or metadata.get("recovered_model_id"))
+    ):
+        return "train_register_model"
     if status == "pending":
         return "pending"
     if status == "\u5df2\u53d6\u6d88":
@@ -604,7 +613,14 @@ def list_track_jobs(track_id: str, limit: int = 20, offset: int = 0) -> list[dic
     return payload
 
 
-def list_tracks(batch_id: str | None = None, limit: int = 100, offset: int = 0) -> list[dict]:
+def list_tracks(
+    batch_id: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    *,
+    include_smoke: bool = False,
+    include_test_data: bool = False,
+) -> list[dict]:
     conn = get_connection()
     try:
         query = "SELECT * FROM tracks WHERE 1=1"
@@ -612,10 +628,48 @@ def list_tracks(batch_id: str | None = None, limit: int = 100, offset: int = 0) 
         if batch_id:
             query += " AND batch_id = ?"
             params.append(batch_id)
-        query += " ORDER BY datetime(created_at) DESC, rowid DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
+        query += " ORDER BY datetime(created_at) DESC, rowid DESC"
         rows = conn.execute(query, tuple(params)).fetchall()
-        return [dict(row) for row in rows]
+        items = [dict(row) for row in rows]
+        batch_rows = {
+            row["batch_id"]: dict(row)
+            for row in conn.execute("SELECT * FROM release_batches").fetchall()
+        }
+        include_filtered = bool(include_smoke or include_test_data)
+        if not include_filtered:
+            items = [
+                item for item in items
+                if not is_test_data_track_record(item, batch_rows.get(item.get("batch_id") or ""))
+            ]
+        else:
+            for item in items:
+                reason = explain_test_data_filter_reason(item, kind="track")
+                if not reason:
+                    reason = explain_test_data_filter_reason(batch_rows.get(item.get("batch_id") or ""), kind="batch")
+                if reason:
+                    item["filter_reason"] = reason
+        return items[offset: offset + limit]
+    finally:
+        conn.close()
+
+
+def hidden_test_track_count(batch_id: str | None = None) -> int:
+    conn = get_connection()
+    try:
+        query = "SELECT * FROM tracks WHERE 1=1"
+        params: list[object] = []
+        if batch_id:
+            query += " AND batch_id = ?"
+            params.append(batch_id)
+        rows = [dict(row) for row in conn.execute(query, tuple(params)).fetchall()]
+        batch_rows = {
+            row["batch_id"]: dict(row)
+            for row in conn.execute("SELECT * FROM release_batches").fetchall()
+        }
+        return sum(
+            1 for row in rows
+            if is_test_data_track_record(row, batch_rows.get(row.get("batch_id") or ""))
+        )
     finally:
         conn.close()
 

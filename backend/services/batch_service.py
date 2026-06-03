@@ -10,9 +10,11 @@ from fastapi import UploadFile
 try:
     from ..db import BATCHES_ROOT, PROJECT_ROOT, get_connection
     from .audit_service import record_audit_event
+    from .smoke_filter import explain_test_data_filter_reason, is_test_data_batch_record
 except ImportError:
     from db import BATCHES_ROOT, PROJECT_ROOT, get_connection
     from services.audit_service import record_audit_event
+    from services.smoke_filter import explain_test_data_filter_reason, is_test_data_batch_record
 
 
 def get_batch_root(batch_id: str) -> str:
@@ -82,7 +84,13 @@ def create_batch(batch_name: str, target_platforms: list[str] | None = None, out
     return get_batch(batch_id) or {}
 
 
-def list_batches(limit: int = 50, offset: int = 0) -> list[dict]:
+def list_batches(
+    limit: int = 50,
+    offset: int = 0,
+    *,
+    include_smoke: bool = False,
+    include_test_data: bool = False,
+) -> list[dict]:
     conn = get_connection()
     try:
         rows = conn.execute(
@@ -101,28 +109,51 @@ def list_batches(limit: int = 50, offset: int = 0) -> list[dict]:
                 GROUP BY batch_id
             ) t ON t.batch_id = b.batch_id
             ORDER BY datetime(b.created_at) DESC, b.rowid DESC
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
+            """
         ).fetchall()
-        return [dict(row) for row in rows]
+        items = [dict(row) for row in rows]
+        include_filtered = bool(include_smoke or include_test_data)
+        if not include_filtered:
+            items = [item for item in items if not is_test_data_batch_record(item)]
+        else:
+            for item in items:
+                reason = explain_test_data_filter_reason(item, kind="batch")
+                if reason:
+                    item["filter_reason"] = reason
+        return items[offset: offset + limit]
     finally:
         conn.close()
 
 
-def get_batch(batch_id: str) -> dict | None:
+def hidden_test_batch_count() -> int:
+    conn = get_connection()
+    try:
+        rows = [dict(row) for row in conn.execute("SELECT * FROM release_batches").fetchall()]
+        return sum(1 for row in rows if is_test_data_batch_record(row))
+    finally:
+        conn.close()
+
+
+def get_batch(batch_id: str, *, include_test_data: bool = True) -> dict | None:
     conn = get_connection()
     try:
         row = conn.execute("SELECT * FROM release_batches WHERE batch_id = ? LIMIT 1", (batch_id,)).fetchone()
         if not row:
             return None
         payload = dict(row)
+        reason = explain_test_data_filter_reason(payload, kind="batch")
+        if reason:
+            payload["filter_reason"] = reason
         track_rows = conn.execute(
             "SELECT * FROM tracks WHERE batch_id = ? ORDER BY datetime(created_at) DESC, rowid DESC",
             (batch_id,),
         ).fetchall()
-        payload["track_count"] = len(track_rows)
-        payload["tracks"] = [dict(track) for track in track_rows]
+        tracks = [dict(track) for track in track_rows]
+        if not include_test_data:
+            tracks = [track for track in tracks if not reason and not explain_test_data_filter_reason(track, kind="track")]
+        payload["track_count"] = len(tracks)
+        payload["hidden_test_track_count"] = len(track_rows) - len(tracks)
+        payload["tracks"] = tracks
         payload["audit_events"] = [
             dict(row)
             for row in conn.execute(

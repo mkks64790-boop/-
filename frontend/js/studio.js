@@ -1,4 +1,4 @@
-import { getJSON, postJSON, toErrorMessage } from "./api.js";
+import { getJSON, patchJSON, postJSON, toErrorMessage } from "./api.js";
 import {
   $,
   escapeHtml,
@@ -20,6 +20,50 @@ const STUDIO_TRACK_HISTORY_STATE_KEY = "feishark_ui_studio_track_history_collaps
 const STUDIO_TECHNICAL_STATE_KEY = "feishark_ui_studio_technical_collapsed";
 const STUDIO_JOB_NOTE_KEY_PREFIX = "feishark_studio_job_note_";
 const STUDIO_EFFECT_RACK_STATE_PREFIX = "feishark_studio_effect_rack_";
+const TEST_RECORDS_VISIBLE_KEY = "feishark_ui_show_test_records";
+const TEST_RECORDS_EVENT = "feishark:test-records-visibility-changed";
+const RENDER_ENGINE_COPY_ONLY = "copy_only";
+const RENDER_ENGINE_FFMPEG_V0 = "ffmpeg_dsp_v0";
+const STAGE47_STUDIO_HINTS = [
+  "stage47",
+  "stage_47",
+  "stage-47",
+  "朱朱_stage47_single_long",
+  "v_d4d7e1c1",
+  "train_7f4d6b4e611e",
+  "task_b2272d133fff",
+  "art_f99f7e4afb10",
+];
+const SMOKE_ONLY_REVIEW_NOTE = "stage49 browser smoke only - not a human quality verdict";
+const REVIEW_ROUTE_BY_VERDICT = {
+  unreviewed: "needs_human_review",
+  needs_work: "route_to_rework",
+  usable: "route_to_candidate_pool",
+  release_candidate: "route_to_release_candidate",
+  rejected: "route_to_archive_or_rerun",
+};
+const REVIEW_ROUTE_META = {
+  needs_human_review: {
+    label: "继续人工试听",
+    description: "先用 A/B 面板听完当前成品和原始输入，再保存人工结论。",
+  },
+  route_to_rework: {
+    label: "回 Factory 调分离 / 重跑 cover",
+    description: "当前成品需要返工，下一步应回到 Factory 检查分离、模型或重跑 cover。",
+  },
+  route_to_candidate_pool: {
+    label: "保留为可用候选",
+    description: "当前成品可用但还不是发布候选，先收进候选池继续对比。",
+  },
+  route_to_release_candidate: {
+    label: "送入 Factory 候选成品",
+    description: "当前成品可作为发布候选，下一步回 Factory 进入候选成品管理。",
+  },
+  route_to_archive_or_rerun: {
+    label: "标记废弃，建议重跑",
+    description: "当前成品不建议继续修，回 Factory 重新选择处理路线。",
+  },
+};
 
 const DEFAULT_EFFECT_RACK_STATE = [
   {
@@ -77,8 +121,13 @@ const state = {
   technicalCollapsed: true,
   effectRackState: [],
   effectRackStorageKey: "",
+  effectRackCapabilities: null,
+  effectRackCapabilitiesError: "",
+  selectedRenderEngine: RENDER_ENGINE_COPY_ONLY,
   effectExportApiAvailable: false,
   effectExportInFlight: false,
+  listeningReview: null,
+  listeningReviewInFlight: false,
 };
 
 const controlBindings = [
@@ -87,6 +136,81 @@ const controlBindings = [
 
 function isCompletedStatus(status) {
   return status === "completed" || status === "完成";
+}
+
+function getShowTestRecords() {
+  return Boolean(loadUiState(TEST_RECORDS_VISIBLE_KEY, false));
+}
+
+function saveShowTestRecords(value) {
+  saveUiState(TEST_RECORDS_VISIBLE_KEY, Boolean(value));
+  document.dispatchEvent(new CustomEvent(TEST_RECORDS_EVENT, { detail: { visible: Boolean(value) } }));
+}
+
+function withTestRecordParams(params = {}) {
+  const visible = getShowTestRecords();
+  return {
+    ...params,
+    include_test_data: visible ? "true" : "false",
+    include_smoke: visible ? "true" : "false",
+  };
+}
+
+function buildQuery(params = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, value);
+  }
+  return search.toString() ? `?${search.toString()}` : "";
+}
+
+function recordSearchText(value = {}) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function isTestRecord(value = {}) {
+  const text = recordSearchText(value);
+  return /(?:^|[\s_\-./\\])(?:smoke|self[_-]?check|playwright|test)(?:$|[\s_\-./\\])/i.test(text)
+    || /stage[\s_\-]*\d+/i.test(text);
+}
+
+function filterTestRecords(items = []) {
+  return getShowTestRecords() ? items : items.filter(item => !isTestRecord(item));
+}
+
+function renderTestRecordsToggle(hiddenCount = 0) {
+  const anchor = $("studioLibraryDrawer");
+  if (!anchor) return;
+  let toggle = document.getElementById("studioTestRecordsToggle");
+  if (!toggle) {
+    toggle = document.createElement("div");
+    toggle.id = "studioTestRecordsToggle";
+    toggle.className = "test-record-toggle";
+    anchor.insertAdjacentElement("beforebegin", toggle);
+  }
+
+  const visible = getShowTestRecords();
+  toggle.innerHTML = `
+    <label class="test-record-toggle-label">
+      <input id="studioShowTestRecords" type="checkbox" ${visible ? "checked" : ""}>
+      <span>显示测试记录</span>
+    </label>
+    <span class="test-record-toggle-note">${
+      visible
+        ? "当前包含 smoke / stage / test / self_check / playwright 试听成品。"
+        : `默认隐藏测试试听成品${hiddenCount ? `，已隐藏 ${hiddenCount} 条。` : "。"}`
+    }</span>
+  `;
+  $("studioShowTestRecords")?.addEventListener("change", event => {
+    saveShowTestRecords(event.target.checked);
+    refreshResources().catch(() => {});
+  });
 }
 
 function toAbsoluteUrl(path) {
@@ -100,6 +224,9 @@ function basename(value) {
 }
 
 function jobModelSourceSummary(job = {}) {
+  if (/checkpoint.*恢复|恢复登记|recovered/i.test(String(job.voice_model_source_summary || ""))) {
+    return "checkpoint 恢复 / e90";
+  }
   if (job.voice_model_source_summary) {
     return job.voice_model_source_summary;
   }
@@ -112,14 +239,46 @@ function jobModelSourceSummary(job = {}) {
   return "模型来源未标注";
 }
 
+function isStage47StudioJob(job = {}, artifact = {}) {
+  const text = [
+    job.job_id,
+    job.voice_name,
+    job.voice_model_id,
+    job.generated_model_id,
+    job.generated_model_name,
+    job.generated_model_summary,
+    job.voice_model_source_summary,
+    job.voice_model_source_job_id,
+    job.voice_model_source_strategy_key,
+    job.voice_model_source_material_profile,
+    job.output_root,
+    artifact.artifact_id,
+    artifact.artifact_type,
+    artifact.file_name,
+    artifact.filename,
+    artifact.name,
+    artifact.display_name,
+    artifact.file_path,
+    artifact.download_url,
+    artifact.metadata_json,
+  ].filter(Boolean).join(" ");
+  const normalized = text.toLowerCase();
+  return /stage[\s_-]*47/i.test(text)
+    || STAGE47_STUDIO_HINTS.some(hint => normalized.includes(hint.toLowerCase()));
+}
+
 function renderJobModelSourceLine(job = {}) {
   const sourceSummary = jobModelSourceSummary(job);
   const sourceJobId = job.voice_model_source_job_id || "";
+  const recovered = /checkpoint.*恢复|recovered/i.test(sourceSummary);
+  const stage47 = isStage47StudioJob(job);
   return `
     <div class="studio-inline-note">
       ${renderModelOriginPill(job.voice_model_origin_kind || "")}
       <span>${escapeHtml(sourceSummary)}</span>
       ${sourceJobId ? `<span class="mono">${escapeHtml(sourceJobId)}</span>` : ""}
+      ${recovered ? '<span class="tag checkpoint">checkpoint 恢复</span>' : ""}
+      ${stage47 ? '<span class="tag stage47">Stage47 短 smoke / 完整 cover</span>' : ""}
     </div>
   `;
 }
@@ -142,6 +301,204 @@ function saveJobNote(jobId = "", note = "") {
   const normalized = normalizeJobNote(note);
   saveUiState(jobNoteKey(jobId), normalized);
   return normalized;
+}
+
+function normalizeReviewScore(value, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 1 || number > 5) return fallback;
+  return Math.round(number);
+}
+
+function setReviewScoreControl(inputId, valueId, value) {
+  const input = $(inputId);
+  const output = $(valueId);
+  if (!input || !output) return;
+  const normalized = normalizeReviewScore(value, 0);
+  input.value = normalized ? String(normalized) : "0";
+  output.textContent = normalized ? `${normalized}/5` : "未评";
+}
+
+function syncReviewScoreLabels() {
+  [
+    ["studioReviewOverallScore", "studioReviewOverallValue"],
+    ["studioReviewVocalScore", "studioReviewVocalValue"],
+    ["studioReviewNoiseScore", "studioReviewNoiseValue"],
+    ["studioReviewMixScore", "studioReviewMixValue"],
+  ].forEach(([inputId, valueId]) => {
+    const input = $(inputId);
+    const output = $(valueId);
+    if (!input || !output) return;
+    const score = normalizeReviewScore(input.value, 0);
+    output.textContent = score ? `${score}/5` : "未评";
+  });
+}
+
+function reviewVerdictLabel(verdict = "unreviewed") {
+  const labels = {
+    unreviewed: "未验收",
+    needs_work: "需返工",
+    usable: "可用",
+    release_candidate: "候选成品",
+    rejected: "废弃",
+  };
+  return labels[verdict] || labels.unreviewed;
+}
+
+function reviewRouteFromVerdict(verdict = "unreviewed") {
+  return REVIEW_ROUTE_BY_VERDICT[verdict] || REVIEW_ROUTE_BY_VERDICT.unreviewed;
+}
+
+function reviewSummaryFromPayload(payload = null, artifact = null, review = {}) {
+  const fromPayload = payload?.review_summary
+    || payload?.listening_review_summary
+    || payload?.summary
+    || {};
+  const fromArtifact = artifact?.listening_review_summary || {};
+  const verdict = review.verdict || fromPayload.verdict || fromArtifact.verdict || "unreviewed";
+  const route = fromPayload.route || fromArtifact.route || reviewRouteFromVerdict(verdict);
+  return {
+    ...fromArtifact,
+    ...fromPayload,
+    verdict,
+    route,
+    is_human_reviewed: Boolean(fromPayload.is_human_reviewed ?? fromArtifact.is_human_reviewed),
+  };
+}
+
+function renderReviewActionButton(href = "", label = "", className = "ghost-btn") {
+  if (!href) {
+    return `<span class="${escapeHtml(className)} is-disabled" aria-disabled="true">${escapeHtml(label)}</span>`;
+  }
+  return `<a class="${escapeHtml(className)}" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
+}
+
+function renderStudioReviewNextAction(job = null, artifact = null, payload = null, review = {}) {
+  const label = $("studioReviewRouteLabel");
+  const actions = $("studioReviewNextActions");
+  const smokeNote = $("studioReviewSmokeNote");
+  if (!label || !actions || !smokeNote) return;
+
+  if (!job?.job_id || !artifact?.artifact_id) {
+    label.textContent = "载入可验收成品后显示下一步。";
+    actions.innerHTML = `<span class="detail-action-hint">当前没有可路由成品。</span>`;
+    smokeNote.hidden = true;
+    return;
+  }
+
+  const summary = reviewSummaryFromPayload(payload, artifact, review);
+  const route = summary.route || reviewRouteFromVerdict(summary.verdict);
+  const meta = REVIEW_ROUTE_META[route] || REVIEW_ROUTE_META.needs_human_review;
+  const factoryUrl = state.sourceFactoryUrl || job.factory_url || buildFactoryUrl(state.sourceBatchId, state.sourceTrackId);
+  const downloadUrl = artifact.download_url || `/api/jobs/${job.job_id}/artifacts/${artifact.artifact_id}/download`;
+  const notes = String(review.notes || summary.notes_preview || "");
+  const isSmokeOnly = notes.includes(SMOKE_ONLY_REVIEW_NOTE);
+
+  label.textContent = `${meta.label}：${meta.description}`;
+  smokeNote.hidden = !isSmokeOnly;
+  actions.innerHTML = [
+    route === "needs_human_review"
+      ? `<span class="detail-action-hint">继续使用上方 A/B 播放器人工判断，不会自动启动重任务。</span>`
+      : "",
+    route === "route_to_rework"
+      ? renderReviewActionButton(factoryUrl, "回 Factory 返工", "primary-btn warm")
+      : "",
+    route === "route_to_candidate_pool"
+      ? `<span class="detail-action-hint">已保留为可用候选；可继续对比其它版本。</span>`
+      : "",
+    route === "route_to_release_candidate"
+      ? renderReviewActionButton(factoryUrl, "送入 Factory 候选成品", "primary-btn warm")
+      : "",
+    route === "route_to_archive_or_rerun"
+      ? renderReviewActionButton(factoryUrl, "回 Factory 重跑", "ghost-btn danger")
+      : "",
+    renderReviewActionButton(toAbsoluteUrl(downloadUrl), "下载当前成品", "ghost-btn"),
+  ].filter(Boolean).join("");
+}
+
+function renderListeningReviewPanel(job = null, artifact = null, payload = null) {
+  const panel = $("studioReviewPanel");
+  if (!panel) return;
+  const hasArtifact = Boolean(job?.job_id && artifact?.artifact_id);
+  panel.hidden = !hasArtifact;
+  if (!hasArtifact) {
+    state.listeningReview = null;
+    const sourceAudio = $("studioReviewSourceAudio");
+    if (sourceAudio) {
+      sourceAudio.removeAttribute("src");
+      sourceAudio.load();
+    }
+    renderStudioReviewNextAction(null, null);
+    return;
+  }
+
+  const review = payload?.review || state.listeningReview?.review || {};
+  state.listeningReview = payload || { review };
+  $("studioReviewVerdict").value = review.verdict || "unreviewed";
+  setReviewScoreControl("studioReviewOverallScore", "studioReviewOverallValue", review.overall_score);
+  setReviewScoreControl("studioReviewVocalScore", "studioReviewVocalValue", review.vocal_score);
+  setReviewScoreControl("studioReviewNoiseScore", "studioReviewNoiseValue", review.noise_score);
+  setReviewScoreControl("studioReviewMixScore", "studioReviewMixValue", review.mix_score);
+  $("studioReviewNotes").value = review.notes || "";
+  const sourceUrl = toAbsoluteUrl(`/api/jobs/${job.job_id}/source-audio/download`);
+  const sourceAudio = $("studioReviewSourceAudio");
+  if (sourceAudio && sourceAudio.src !== sourceUrl) {
+    sourceAudio.src = sourceUrl;
+    sourceAudio.load();
+  }
+  setActionLink("studioReviewSourceDownloadBtn", sourceUrl, true);
+  $("studioReviewState").textContent = review.reviewed_at
+    ? `已保存：${formatDateTime(review.reviewed_at)} · ${reviewVerdictLabel(review.verdict)}`
+    : "尚未保存试听验收。";
+  renderStudioReviewNextAction(job, artifact, payload, review);
+}
+
+function collectListeningReviewPayload() {
+  const score = id => {
+    const value = normalizeReviewScore($(id)?.value, 0);
+    return value || null;
+  };
+  return {
+    verdict: $("studioReviewVerdict")?.value || "unreviewed",
+    overall_score: score("studioReviewOverallScore"),
+    vocal_score: score("studioReviewVocalScore"),
+    noise_score: score("studioReviewNoiseScore"),
+    mix_score: score("studioReviewMixScore"),
+    notes: normalizeJobNote($("studioReviewNotes")?.value || ""),
+  };
+}
+
+async function refreshListeningReview(job = state.selectedJob, artifact = state.selectedArtifact) {
+  if (!job?.job_id || !artifact?.artifact_id) {
+    renderListeningReviewPanel(null, null);
+    return;
+  }
+  try {
+    const payload = await getJSON(`/api/jobs/${job.job_id}/artifacts/${artifact.artifact_id}/review`);
+    renderListeningReviewPanel(job, artifact, payload);
+  } catch {
+    renderListeningReviewPanel(job, artifact, { review: {} });
+  }
+}
+
+async function saveListeningReview() {
+  if (!state.selectedJob?.job_id || !state.selectedArtifact?.artifact_id || state.listeningReviewInFlight) return;
+  state.listeningReviewInFlight = true;
+  $("studioReviewSaveBtn").disabled = true;
+  $("studioReviewState").textContent = "正在保存试听验收...";
+  try {
+    const payload = await patchJSON(
+      `/api/jobs/${state.selectedJob.job_id}/artifacts/${state.selectedArtifact.artifact_id}/review`,
+      collectListeningReviewPayload(),
+    );
+    renderListeningReviewPanel(state.selectedJob, state.selectedArtifact, payload);
+    showToast("试听验收已保存到成品 metadata", "success");
+  } catch (error) {
+    $("studioReviewState").textContent = `保存失败：${toErrorMessage(error)}`;
+    showToast(`试听验收保存失败：${toErrorMessage(error)}`, "error");
+  } finally {
+    state.listeningReviewInFlight = false;
+    $("studioReviewSaveBtn").disabled = false;
+  }
 }
 
 function effectRackStorageKey(trackId = "", jobId = "", artifactId = "") {
@@ -252,9 +609,88 @@ function updateEffectRackSummary() {
   syncEffectRackExportAction();
 }
 
+function getRenderEngineCapability(engineId = "") {
+  const engines = Array.isArray(state.effectRackCapabilities?.engines)
+    ? state.effectRackCapabilities.engines
+    : [];
+  return engines.find(item => item.id === engineId) || null;
+}
+
+function isRenderEngineAvailable(engineId = state.selectedRenderEngine) {
+  if (engineId === RENDER_ENGINE_COPY_ONLY) {
+    const copyCapability = getRenderEngineCapability(RENDER_ENGINE_COPY_ONLY);
+    return copyCapability ? copyCapability.available !== false : true;
+  }
+  const capability = getRenderEngineCapability(engineId);
+  return Boolean(capability?.available);
+}
+
+function renderEngineUnavailableReason(engineId = state.selectedRenderEngine) {
+  const capability = getRenderEngineCapability(engineId);
+  if (capability?.reason) return capability.reason;
+  if (capability?.message) return capability.message;
+  if (engineId === RENDER_ENGINE_FFMPEG_V0) return "本机未检测到可用 ffmpeg，真实渲染 v0 暂不可用。";
+  return "当前输出模式暂不可用。";
+}
+
+function renderEngineExportLabel(engineId = state.selectedRenderEngine) {
+  return engineId === RENDER_ENGINE_FFMPEG_V0 ? "渲染处理版 v0" : "导出处理版草稿";
+}
+
+function renderEngineBusyLabel(engineId = state.selectedRenderEngine) {
+  return engineId === RENDER_ENGINE_FFMPEG_V0 ? "正在渲染处理版 v0..." : "正在导出草稿...";
+}
+
+function renderEngineHint(engineId = state.selectedRenderEngine) {
+  if (engineId === RENDER_ENGINE_FFMPEG_V0) {
+    return isRenderEngineAvailable(RENDER_ENGINE_FFMPEG_V0)
+      ? "真实渲染 v0 会调用本机 ffmpeg 离线生成新音频；当前不是 VST。"
+      : renderEngineUnavailableReason(RENDER_ENGINE_FFMPEG_V0);
+  }
+  if (state.effectRackCapabilitiesError) {
+    return "真实渲染能力暂不可用，可先登记草稿。";
+  }
+  return "登记草稿会保存参数和版本，不改变真实音频。";
+}
+
+function syncRenderModeUi() {
+  const copyBtn = $("studioRenderModeCopyBtn");
+  const ffmpegBtn = $("studioRenderModeFfmpegBtn");
+  const hint = $("studioRenderModeHint");
+
+  if (copyBtn) {
+    copyBtn.classList.toggle("is-active", state.selectedRenderEngine === RENDER_ENGINE_COPY_ONLY);
+    copyBtn.setAttribute("aria-pressed", String(state.selectedRenderEngine === RENDER_ENGINE_COPY_ONLY));
+    copyBtn.disabled = false;
+  }
+  if (ffmpegBtn) {
+    const available = isRenderEngineAvailable(RENDER_ENGINE_FFMPEG_V0);
+    ffmpegBtn.classList.toggle("is-active", state.selectedRenderEngine === RENDER_ENGINE_FFMPEG_V0);
+    ffmpegBtn.setAttribute("aria-pressed", String(state.selectedRenderEngine === RENDER_ENGINE_FFMPEG_V0));
+    ffmpegBtn.disabled = !available;
+    ffmpegBtn.title = available ? "调用本机 ffmpeg 离线生成新音频，不是 VST。" : renderEngineUnavailableReason(RENDER_ENGINE_FFMPEG_V0);
+  }
+  if (hint) {
+    hint.textContent = renderEngineHint();
+  }
+}
+
+function setRenderEngine(engineId = RENDER_ENGINE_COPY_ONLY) {
+  if (engineId === RENDER_ENGINE_FFMPEG_V0 && !isRenderEngineAvailable(RENDER_ENGINE_FFMPEG_V0)) {
+    state.selectedRenderEngine = RENDER_ENGINE_COPY_ONLY;
+    showToast(renderEngineUnavailableReason(RENDER_ENGINE_FFMPEG_V0), "info");
+  } else {
+    state.selectedRenderEngine = engineId === RENDER_ENGINE_FFMPEG_V0 ? RENDER_ENGINE_FFMPEG_V0 : RENDER_ENGINE_COPY_ONLY;
+  }
+  renderEffectRack();
+  syncRenderModeUi();
+  syncEffectRackExportAction();
+}
+
 function canExportEffectRackDraft() {
   return Boolean(
     state.effectExportApiAvailable &&
+    isRenderEngineAvailable(state.selectedRenderEngine) &&
     state.sourceTrackId &&
     state.selectedJob?.job_id &&
     state.sourceArtifactId &&
@@ -270,19 +706,28 @@ function syncEffectRackExportAction() {
   const canExport = canExportEffectRackDraft() && !state.effectExportInFlight;
   button.disabled = !canExport;
   button.classList.toggle("is-disabled", !canExport);
-  button.textContent = state.effectExportInFlight ? "正在导出草稿..." : "导出处理版草稿";
+  button.textContent = state.effectExportInFlight ? renderEngineBusyLabel() : renderEngineExportLabel();
 
   if (state.effectExportInFlight) {
-    hint.textContent = "正在请求后端登记处理版草稿；当前仍是 copy-only，不执行真实 DSP/VST。";
+    hint.textContent = state.selectedRenderEngine === RENDER_ENGINE_FFMPEG_V0
+      ? "正在请求后端生成 ffmpeg v0 渲染版；当前不是 VST。"
+      : "正在请求后端登记处理版草稿；当前仍是 copy-only，不执行真实 DSP/VST。";
   } else if (!state.effectExportApiAvailable) {
-    hint.textContent = "后端 API 暂不可用，无法导出处理版草稿。";
+    hint.textContent = state.effectRackCapabilitiesError
+      ? "真实渲染能力暂不可用，可先登记草稿。"
+      : "后端 API 暂不可用，无法导出处理版。";
+  } else if (!isRenderEngineAvailable(state.selectedRenderEngine)) {
+    hint.textContent = renderEngineUnavailableReason(state.selectedRenderEngine);
   } else if (!state.sourceTrackId || !state.selectedJob?.job_id) {
-    hint.textContent = "需要从带 Track 和 Job 的 Studio 版本进入，才能登记处理版草稿。";
+    hint.textContent = "需要从带 Track 和 Job 的 Studio 版本进入，才能导出处理版。";
   } else if (!state.sourceArtifactId || !state.selectedArtifact?.download_url) {
-    hint.textContent = "当前没有可播放 artifact，暂不能导出处理版草稿。";
+    hint.textContent = "当前没有可播放 artifact，暂不能导出处理版。";
+  } else if (state.selectedRenderEngine === RENDER_ENGINE_FFMPEG_V0) {
+    hint.textContent = "当前导出会调用本机 ffmpeg 离线生成新音频；当前不是 VST。";
   } else {
     hint.textContent = "当前导出为 copy-only 草稿：会登记新版本，但暂不执行真实 DSP/VST。";
   }
+  syncRenderModeUi();
 }
 
 function renderEffectRack() {
@@ -315,6 +760,9 @@ function renderEffectRack() {
       `;
     }).join("");
 
+    const slotNote = state.selectedRenderEngine === RENDER_ENGINE_FFMPEG_V0
+      ? "参数会随请求保存到新 artifact metadata；真实渲染 v0 会调用本机 ffmpeg，不是 VST。"
+      : "草稿参数会随导出请求保存到新 artifact metadata；当前导出只复制源音频，不执行真实 DSP/VST。";
     return `
       <article class="studio-effect-slot ${slot.enabled ? "is-enabled" : ""}">
         <div class="studio-effect-slot-head">
@@ -331,7 +779,7 @@ function renderEffectRack() {
             <span>开关</span>
           </label>
         </div>
-        <div class="studio-effect-slot-note">草稿参数会随导出请求保存到新 artifact metadata；当前导出只复制源音频，不执行真实 DSP/VST。</div>
+        <div class="studio-effect-slot-note">${escapeHtml(slotNote)}</div>
         <div class="studio-effect-param-grid">
           ${controls}
         </div>
@@ -469,28 +917,6 @@ function getTrackVersionMeta(job = {}) {
   return { isCurrent, isLatest, isHistory, isMaster };
 }
 
-function renderTrackVersionBadges(job = {}) {
-  const { isCurrent, isLatest, isHistory, isMaster } = getTrackVersionMeta(job);
-  const parts = [];
-  if (isCurrent) parts.push('<span class="tag success">当前试听</span>');
-  if (isLatest) parts.push('<span class="tag success">最新版本</span>');
-  if (isHistory) parts.push('<span class="tag warn">历史版本</span>');
-  if (isMaster) parts.push('<span class="tag master">当前主成品</span>');
-  return parts.join(" ");
-}
-
-function artifactTypeText(type = "") {
-  if (type === "cover_master") return "原始翻唱成品";
-  if (type === "studio_effect_draft_master") return "处理版草稿";
-  return type || "成品版本";
-}
-
-function processingModeText(mode = "", artifactType = "") {
-  if (mode === "original_cover" || artifactType === "cover_master") return "原始成品";
-  if (mode === "copy_only_no_dsp") return "仅登记草稿，未执行真实 DSP/VST";
-  return mode || "处理方式未标注";
-}
-
 function versionDisplayName(item = {}) {
   return item.voice_name || item.voice_model_id || item.file_name || item.job_id || item.version_id || "未命名版本";
 }
@@ -509,6 +935,79 @@ function versionStudioUrl(item = {}) {
 
 function versionDownloadUrl(item = {}) {
   return toAbsoluteUrl(item.download_url || item.final_artifact_download_url || "");
+}
+
+function parseJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function getVersionMetadata(item = {}) {
+  const artifactId = getVersionArtifactId(item);
+  if (
+    state.selectedArtifact?.metadata_json &&
+    state.selectedJob?.job_id === item.job_id &&
+    state.selectedArtifact?.artifact_id === artifactId
+  ) {
+    return parseJsonObject(state.selectedArtifact.metadata_json);
+  }
+  return parseJsonObject(item.metadata || item.metadata_json);
+}
+
+function effectLabel(effect = {}) {
+  const id = typeof effect === "string" ? effect : effect.id;
+  const labels = {
+    eq: "EQ",
+    compressor: "Compressor",
+    limiter: "Limiter",
+    reverb: "Reverb",
+  };
+  return labels[id] || id || "";
+}
+
+function effectListText(items = []) {
+  if (!Array.isArray(items) || !items.length) return "";
+  return items.map(effectLabel).filter(Boolean).join("、");
+}
+
+function metadataEffectSummaryText(item = {}) {
+  const metadata = getVersionMetadata(item);
+  const lines = [];
+  const applied = effectListText(metadata.applied_effects || item.applied_effects);
+  const unsupported = effectListText(metadata.unsupported_effects || item.unsupported_effects);
+  if (applied) lines.push(`已应用：${applied}`);
+  if (unsupported) lines.push(`暂未支持：${unsupported}`);
+  return lines;
+}
+
+function artifactTypeText(type = "") {
+  if (type === "cover_master") return "原始翻唱成品";
+  if (type === "studio_effect_draft_master") return "处理版草稿";
+  if (type === "studio_effect_render_master") return "已渲染处理版";
+  return type || "成品版本";
+}
+
+function processingModeText(mode = "", artifactType = "") {
+  if (mode === "original_cover" || artifactType === "cover_master") return "原始成品";
+  if (mode === "copy_only_no_dsp") return "仅登记草稿，未执行真实 DSP/VST";
+  if (mode === "ffmpeg_dsp_v0") return "ffmpeg v0 已应用";
+  return mode || "处理方式未标注";
+}
+
+function renderTrackVersionBadges(job = {}) {
+  const { isCurrent, isLatest, isHistory, isMaster } = getTrackVersionMeta(job);
+  const parts = [];
+  if (isCurrent) parts.push('<span class="tag success">当前正在试听</span>');
+  if (isLatest) parts.push('<span class="tag success">最新版本</span>');
+  if (isHistory) parts.push('<span class="tag warn">历史版本</span>');
+  if (isMaster) parts.push('<span class="tag master">当前主成品</span>');
+  return parts.join(" ");
 }
 
 function updateGlobalLibraryHint() {
@@ -597,6 +1096,26 @@ function renderCurrentResourceSummary(job = null, artifact = null) {
   summary.textContent = `当前已载入：${label} / ${fileName} · 状态：${isCompletedStatus(job.status) ? "完成" : job.status || "-"}`;
 }
 
+function versionSourceSummary(item = {}) {
+  const artifactType = item.artifact_type || item.final_artifact_type || "";
+  const processingMode = item.processing_mode || item.final_artifact_processing_mode || "";
+  if (artifactType === "cover_master") return "原始翻唱成品";
+  if (artifactType === "studio_effect_draft_master") return "处理版草稿，仅登记未渲染";
+  if (artifactType === "studio_effect_render_master" || processingMode === "ffmpeg_dsp_v0") return "已渲染处理版，ffmpeg v0";
+  return [artifactTypeText(artifactType), processingModeText(processingMode, artifactType)].filter(Boolean).join("，");
+}
+
+function isSameVersionIdentity(left = {}, right = {}) {
+  const leftArtifactId = getVersionArtifactId(left);
+  const rightArtifactId = getVersionArtifactId(right);
+  return Boolean(
+    left.job_id &&
+    right.job_id &&
+    left.job_id === right.job_id &&
+    (!leftArtifactId || !rightArtifactId || leftArtifactId === rightArtifactId),
+  );
+}
+
 function renderCurrentMasterCard() {
   const card = $("studioCurrentMasterCard");
   if (!card) return;
@@ -604,8 +1123,6 @@ function renderCurrentMasterCard() {
   const title = $("studioCurrentMasterTitle");
   const summary = $("studioCurrentMasterSummary");
   const meta = $("studioCurrentMasterMeta");
-  const openBtn = $("studioCurrentMasterOpenBtn");
-  const downloadBtn = $("studioCurrentMasterDownloadBtn");
   const master = state.currentMasterVersion;
 
   if (!master) {
@@ -620,12 +1137,32 @@ function renderCurrentMasterCard() {
   }
 
   const name = versionDisplayName(master);
-  const typeText = artifactTypeText(master.artifact_type || master.final_artifact_type);
-  const modeText = processingModeText(master.processing_mode || master.final_artifact_processing_mode, master.artifact_type || master.final_artifact_type);
+  const artifactType = master.artifact_type || master.final_artifact_type || "";
+  const processingMode = master.processing_mode || master.final_artifact_processing_mode || "";
+  const typeText = artifactTypeText(artifactType);
+  const modeText = processingModeText(processingMode, artifactType);
+  const playingVersion = {
+    job_id: state.selectedJob?.job_id || "",
+    artifact_id: state.selectedArtifact?.artifact_id || state.sourceArtifactId || "",
+    artifact_type: state.selectedArtifact?.artifact_type || "",
+    processing_mode: parseJsonObject(state.selectedArtifact?.metadata_json).processing_mode || "",
+    voice_name: state.selectedJob?.voice_name || "",
+    voice_model_id: state.selectedJob?.voice_model_id || "",
+    file_name: basename(state.selectedArtifact?.file_path || ""),
+  };
+  const playingLabel = versionDisplayName(playingVersion);
+  const summaryParts = [`${versionSourceSummary(master)}。`];
+  if (playingVersion.job_id && !isSameVersionIdentity(playingVersion, master)) {
+    summaryParts.push(`当前正在试听：${playingLabel}`);
+    summaryParts.push(`当前主成品：${name}`);
+  }
+  const effectLines = metadataEffectSummaryText(master);
+  summary.innerHTML = summaryParts.concat(effectLines).map(line => `<div>${escapeHtml(line)}</div>`).join("");
   title.textContent = name;
   title.title = name;
-  summary.textContent = `${typeText} · ${modeText}`;
   meta.innerHTML = `
+    <span title="${escapeHtml(typeText)}">类型：${escapeHtml(typeText)}</span>
+    <span title="${escapeHtml(modeText)}">处理：${escapeHtml(modeText)}</span>
     <span title="${escapeHtml(master.job_id || "-")}">任务：${escapeHtml(master.job_id || "-")}</span>
     <span title="${escapeHtml(getVersionArtifactId(master) || "-")}">Artifact：${escapeHtml(getVersionArtifactId(master) || "-")}</span>
   `;
@@ -718,9 +1255,10 @@ function buildTrackHistoryItem(job = {}) {
   const modeText = processingModeText(processingMode, artifactType);
   const studioUrl = versionStudioUrl(job);
   const downloadUrl = versionDownloadUrl(job);
-  const note = loadJobNote(job.job_id);
   const isMaster = Boolean(job.is_current_master) || isCurrentMasterVersion(job.job_id, artifactId);
   const isCurrent = state.selectedJobId === job.job_id && (!artifactId || artifactId === state.sourceArtifactId);
+  const effectLines = metadataEffectSummaryText(job);
+  const noteLines = [modeText].concat(effectLines).filter(Boolean);
   return `
     <div class="studio-history-item ${state.selectedJobId === job.job_id ? "is-active" : ""}">
       <div class="studio-history-item-head">
@@ -733,13 +1271,12 @@ function buildTrackHistoryItem(job = {}) {
           </div>
         </div>
         <div class="studio-history-badges">
-          ${isCurrent ? '<span class="tag success">当前正在播放</span>' : ""}
           ${renderTrackVersionBadges(job)}
         </div>
       </div>
-      <div class="studio-history-note ${processingMode === "copy_only_no_dsp" ? "" : "is-empty"}">
+      <div class="studio-history-note ${noteLines.length ? "" : "is-empty"}">
         <strong>${escapeHtml(typeText)}</strong>
-        <span>${escapeHtml(modeText)}</span>
+        ${noteLines.map(line => `<span>${escapeHtml(line)}</span>`).join("")}
         ${job.file_path ? `<span class="mono" title="${escapeHtml(job.file_path)}">${escapeHtml(job.file_path)}</span>` : ""}
       </div>
       <div class="studio-history-actions">
@@ -842,6 +1379,9 @@ function getVisibleResourceJobs() {
   if (!state.selectedJob?.job_id) {
     return state.jobs;
   }
+  if (!getShowTestRecords() && isTestRecord(state.selectedJob)) {
+    return state.jobs;
+  }
   return state.jobs.some(job => job.job_id === state.selectedJob.job_id)
     ? state.jobs
     : [state.selectedJob, ...state.jobs];
@@ -867,20 +1407,23 @@ async function refreshTrackHistory(trackId = "", { force = false } = {}) {
   }
 
   try {
-    const ledger = await getJSON(`/api/tracks/${trackId}/studio-versions?limit=50&offset=0`);
+    const ledger = await getJSON(`/api/tracks/${trackId}/studio-versions${buildQuery(withTestRecordParams({ limit: 50, offset: 0 }))}`);
     state.trackHistoryTrackId = trackId;
     state.versionLedgerAvailable = true;
     state.versionLedgerFallbackReason = "";
     state.currentMasterJobId = ledger.current_master_job_id || "";
     state.currentMasterArtifactId = ledger.current_master_artifact_id || "";
-    state.currentMasterVersion = ledger.current_master || (ledger.items || []).find(item => item.is_current_master) || null;
-    state.studioVersions = ledger.items || [];
+    const visibleItems = filterTestRecords(ledger.items || []);
+    state.currentMasterVersion = ledger.current_master && !isTestRecord(ledger.current_master)
+      ? ledger.current_master
+      : visibleItems.find(item => item.is_current_master) || null;
+    state.studioVersions = visibleItems;
     state.trackHistory = state.studioVersions;
     renderTrackHistory();
     return state.trackHistory;
   } catch (error) {
     try {
-      const response = await getJSON(`/api/tracks/${trackId}/jobs?limit=50&offset=0`);
+      const response = await getJSON(`/api/tracks/${trackId}/jobs${buildQuery(withTestRecordParams({ limit: 50, offset: 0 }))}`);
       state.trackHistoryTrackId = trackId;
       state.versionLedgerAvailable = false;
       state.versionLedgerFallbackReason = toErrorMessage(error);
@@ -888,7 +1431,7 @@ async function refreshTrackHistory(trackId = "", { force = false } = {}) {
       state.currentMasterArtifactId = response.current_master_artifact_id || "";
       state.currentMasterVersion = response.current_master || null;
       state.studioVersions = [];
-      state.trackHistory = sortTrackHistory((response.items || []).filter(isTrackHistoryEligible));
+      state.trackHistory = sortTrackHistory(filterTestRecords(response.items || []).filter(isTrackHistoryEligible));
       renderTrackHistory();
       showToast("版本账本暂不可用，已退回旧成品历史。", "info");
       return state.trackHistory;
@@ -1043,9 +1586,24 @@ function renderEmptyStudio() {
   renderTrackHistory();
   renderCurrentMasterCard();
   renderJobNoteEditor(null);
+  renderListeningReviewPanel(null, null);
   renderEffectRack();
   drawWaveform();
   setStudioStatus("等待载入成品资源", "warning");
+}
+
+function renderStudioContractUnavailable({ jobId = "", artifactId = "", error = null } = {}) {
+  renderEmptyStudio();
+  const message = `Backend restart or UI contract unavailable. Requested job_id=${jobId || "-"} artifact_id=${artifactId || "-"}${error ? `; ${toErrorMessage(error)}` : ""}`;
+  $("studioTrackKicker").textContent = "Studio contract unavailable";
+  $("studioTrackTitle").textContent = "Backend restart or contract update required";
+  $("studioTrackSubline").textContent = message;
+  $("studioSummaryText").textContent = message;
+  $("studioCurrentResourceSummary").textContent = message;
+  $("studioResourceList").innerHTML = `<div class="studio-resource-empty">${escapeHtml(message)}</div>`;
+  $("studioTechnicalSummary").textContent = message;
+  $("studioStageLogList").innerHTML = `<div class="studio-resource-empty">${escapeHtml(message)}</div>`;
+  setStudioStatus("Backend restart / contract unavailable", "danger");
 }
 
 function pickPlayableArtifact(jobId, artifacts, requestedArtifactId = "") {
@@ -1164,6 +1722,7 @@ function renderArtifactSummary(job, artifact) {
   const fileName = basename(artifact?.file_path || "final_master.wav");
   const voiceLabel = job.voice_name || job.voice_model_id || "未命名音色";
   const playUrl = toAbsoluteUrl(artifact?.download_url || `/api/download/${job.job_id}`);
+  const stage47 = isStage47StudioJob(job, artifact || {});
   const versionHint = $("studioVersionHint");
   const versionState = getTrackVersionMeta({
     job_id: job.job_id,
@@ -1184,7 +1743,7 @@ function renderArtifactSummary(job, artifact) {
   $("studioVersionRolePill").innerHTML = renderTrackVersionBadges({
     job_id: job.job_id,
     artifact_id: artifact?.artifact_id || "",
-  });
+  }) + (stage47 ? '<span class="tag stage47">Stage47 短 smoke / 完整 cover</span>' : "");
   if (hasTrackHistory && isHistory && isMaster && !isLatest) {
     versionHint.hidden = false;
     versionHint.textContent = `当前试听不是这个 Track 的最新版本，但它已经被设为当前主成品。最新版本是 ${latestLabel}。`;
@@ -1208,9 +1767,10 @@ function renderArtifactSummary(job, artifact) {
     versionHint.hidden = true;
     versionHint.textContent = "";
   }
+  const stage47Note = stage47 ? "这是 Stage47 短 smoke / 完整 cover 验收入口，不标注为正式成品。" : "";
   $("studioSummaryText").textContent = hasTrackHistory && master?.job_id
-    ? `当前围绕任务 ${job.job_id} 的最终成品继续工作。当前主成品是 ${masterLabel}，所用模型${jobModelSourceSummary(job)}。`
-    : `当前围绕任务 ${job.job_id} 的最终成品继续工作，可直接下载原始成品；所用模型${jobModelSourceSummary(job)}。`;
+    ? `当前围绕任务 ${job.job_id} 的最终成品继续工作。当前主成品是 ${masterLabel}，所用模型${jobModelSourceSummary(job)}。${stage47Note}`
+    : `当前围绕任务 ${job.job_id} 的最终成品继续工作，可直接下载原始成品；所用模型${jobModelSourceSummary(job)}。${stage47Note}`;
   $("studioArtifactMetaGrid").innerHTML = `
     <div class="meta-card">
       <div class="meta-label">来源任务</div>
@@ -1227,6 +1787,13 @@ function renderArtifactSummary(job, artifact) {
       <div class="meta-value" title="${escapeHtml(jobModelSourceSummary(job))}">${escapeHtml(jobModelSourceSummary(job))}</div>
       ${renderJobModelSourceLine(job)}
     </div>
+    ${stage47 ? `
+      <div class="meta-card">
+        <div class="meta-label">Stage47 验收</div>
+        <div class="meta-value">短 smoke / 完整 cover</div>
+        <div class="studio-inline-note">用于真实闭环验收，不标注为正式成品。</div>
+      </div>
+    ` : ""}
   `;
   setActionLink("studioSummaryDownloadBtn", playUrl, true);
   renderJobNoteEditor(job);
@@ -1319,16 +1886,23 @@ async function loadJob(jobId, { artifactId = "" } = {}) {
     const [job, artifactResp, stageLogsResp] = await Promise.all([
       getJSON(`/api/jobs/${jobId}`),
       getJSON(`/api/jobs/${jobId}/artifacts`),
-      getJSON(`/api/jobs/${jobId}/stage-logs`).catch(() => ({ stage_logs: [] })),
+      getJSON(`/api/jobs/${jobId}/stage-logs${buildQuery(withTestRecordParams({}))}`).catch(() => ({ stage_logs: [] })),
     ]);
+    if (!getShowTestRecords() && isTestRecord(job)) {
+      renderEmptyStudio();
+      renderTestRecordsToggle(1);
+      setStudioStatus("测试成品已隐藏，打开“显示测试记录”后可查看", "warning");
+      return;
+    }
 
     const artifact = pickPlayableArtifact(jobId, artifactResp.artifacts || [], artifactId);
-    state.stageLogs = stageLogsResp.stage_logs || [];
+    state.stageLogs = filterTestRecords(stageLogsResp.stage_logs || []);
     state.selectedJob = job;
     state.selectedArtifact = artifact;
     renderResourcePicker();
     renderJobMeta(job, artifact);
     syncPlayerUi(job, artifact);
+    await refreshListeningReview(job, artifact);
     const context = resolveFactoryContext(job);
     updateQuery(jobId, artifact?.artifact_id || "", context.trackId, context.batchId);
     await refreshTrackHistory(context.trackId, { force: state.trackHistoryTrackId !== context.trackId });
@@ -1336,7 +1910,7 @@ async function loadJob(jobId, { artifactId = "" } = {}) {
     renderArtifactSummary(job, artifact);
   } catch (error) {
     showToast(`Studio 载入任务失败：${toErrorMessage(error)}`, "error");
-    setStudioStatus("成品载入失败", "danger");
+    renderStudioContractUnavailable({ jobId, artifactId, error });
   }
 }
 
@@ -1427,21 +2001,28 @@ function syncAudioMeta() {
 
 async function refreshResources() {
   try {
-    const response = await getJSON("/api/jobs?job_type=cover&limit=100&offset=0");
-    const jobs = (response.items || [])
+    const response = await getJSON(`/api/jobs${buildQuery(withTestRecordParams({ job_type: "cover", limit: 100, offset: 0 }))}`);
+    const rawJobs = (response.items || [])
       .filter(job => job.job_type === "cover" && isCompletedStatus(job.status))
       .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
+    const jobs = filterTestRecords(rawJobs);
 
     state.jobs = jobs;
+    const responseHiddenCount = Number(response.hidden_test_count);
+    const hiddenCount = Number.isFinite(responseHiddenCount)
+      ? responseHiddenCount
+      : Math.max(0, rawJobs.length - jobs.length);
+    renderTestRecordsToggle(hiddenCount);
 
     const params = new URLSearchParams(window.location.search);
     const requestedJobId = params.get("job_id") || "";
     const requestedArtifactId = params.get("artifact_id") || "";
-    const nextJobId = state.selectedJobId || requestedJobId || jobs[0]?.job_id || "";
+    const safeRequestedJobId = !getShowTestRecords() && isTestRecord(requestedJobId) ? "" : requestedJobId;
+    const nextJobId = state.selectedJobId || safeRequestedJobId || jobs[0]?.job_id || "";
 
     if (!jobs.length && !nextJobId) {
       renderResourcePicker();
-      await setStudioLibraryCollapsed(false, { immediate: true });
+      await setStudioLibraryCollapsed(true, { immediate: true, allowEmptyOpen: true });
       renderEmptyStudio();
       return;
     }
@@ -1451,22 +2032,38 @@ async function refreshResources() {
     await loadJob(nextJobId, { artifactId: requestedArtifactId });
   } catch (error) {
     showToast(`Studio 读取成品列表失败：${toErrorMessage(error)}`, "error");
+    const params = new URLSearchParams(window.location.search);
+    const requestedJobId = params.get("job_id") || "";
+    const requestedArtifactId = params.get("artifact_id") || "";
+    if (requestedJobId && (getShowTestRecords() || !isTestRecord(requestedJobId))) {
+      await loadJob(requestedJobId, { artifactId: requestedArtifactId });
+      return;
+    }
     $("studioResourceCount").textContent = "成品资源读取失败";
     $("studioLibrarySummary").textContent = "成品资源读取失败，请稍后重试。";
     $("studioResourceSelect").innerHTML = `<option value="">资源读取失败</option>`;
     $("studioResourceList").innerHTML = `<div class="studio-resource-empty">成品资源读取失败，请回到 Dashboard 确认至少存在一个已完成的 cover job。</div>`;
-    await setStudioLibraryCollapsed(false, { immediate: true });
+    await setStudioLibraryCollapsed(true, { immediate: true, allowEmptyOpen: true });
     renderEmptyStudio();
   }
 }
 
 async function refreshEffectRackExportAvailability() {
   try {
-    await getJSON("/api/health");
+    const capabilities = await getJSON("/api/studio/effect-rack/capabilities");
+    state.effectRackCapabilities = capabilities;
+    state.effectRackCapabilitiesError = "";
+    state.effectExportApiAvailable = isRenderEngineAvailable(RENDER_ENGINE_COPY_ONLY);
+    if (state.selectedRenderEngine === RENDER_ENGINE_FFMPEG_V0 && !isRenderEngineAvailable(RENDER_ENGINE_FFMPEG_V0)) {
+      state.selectedRenderEngine = RENDER_ENGINE_COPY_ONLY;
+    }
+  } catch (error) {
+    state.effectRackCapabilities = null;
+    state.effectRackCapabilitiesError = toErrorMessage(error);
     state.effectExportApiAvailable = true;
-  } catch {
-    state.effectExportApiAvailable = false;
+    state.selectedRenderEngine = RENDER_ENGINE_COPY_ONLY;
   }
+  syncRenderModeUi();
   syncEffectRackExportAction();
 }
 
@@ -1481,22 +2078,29 @@ async function handleEffectRackExport() {
 
   try {
     const noteInput = $("studioJobNoteInput");
+    const renderEngine = state.selectedRenderEngine;
     const payload = await postJSON("/api/studio/effect-rack/export", {
       track_id: state.sourceTrackId,
       source_job_id: state.selectedJob.job_id,
       source_artifact_id: state.sourceArtifactId,
       effect_rack: state.effectRackState,
       export_profile: "studio_balanced",
+      render_engine: renderEngine,
       note: normalizeJobNote(noteInput?.value || ""),
     });
-    showToast("已生成处理版草稿；当前未执行真实 DSP/VST", "success");
+    showToast(
+      renderEngine === RENDER_ENGINE_FFMPEG_V0
+        ? "已生成 ffmpeg v0 渲染版；当前不是 VST"
+        : "已生成处理版草稿；当前未执行真实 DSP/VST",
+      "success",
+    );
     if (payload?.studio_url) {
       window.location.href = payload.studio_url;
       return;
     }
     await loadJob(state.selectedJob.job_id, { artifactId: payload?.artifact_id || state.sourceArtifactId });
   } catch (error) {
-    showToast(`处理版草稿导出失败：${effectExportErrorMessage(error)}`, "error");
+    showToast(`处理版导出失败：${effectExportErrorMessage(error)}`, "error");
   } finally {
     state.effectExportInFlight = false;
     syncEffectRackExportAction();
@@ -1541,6 +2145,16 @@ function bindAudioEvents() {
 }
 
 function bindResourceEvents() {
+  window.addEventListener("storage", event => {
+    if (event.key === TEST_RECORDS_VISIBLE_KEY) {
+      renderTestRecordsToggle();
+      refreshResources().catch(() => {});
+    }
+  });
+  document.addEventListener(TEST_RECORDS_EVENT, () => {
+    renderTestRecordsToggle();
+  });
+
   $("studioReloadBtn").addEventListener("click", () => {
     if (state.selectedJobId) {
       loadJob(state.selectedJobId).catch(() => {});
@@ -1599,12 +2213,37 @@ function bindResourceEvents() {
     handleEffectRackExport().catch(() => {});
   });
 
+  $("studioRenderModeCopyBtn")?.addEventListener("click", () => {
+    setRenderEngine(RENDER_ENGINE_COPY_ONLY);
+  });
+
+  $("studioRenderModeFfmpegBtn")?.addEventListener("click", () => {
+    setRenderEngine(RENDER_ENGINE_FFMPEG_V0);
+  });
+
   $("studioJobNoteInput").addEventListener("input", () => {
     persistCurrentJobNote();
   });
 
   $("studioJobNoteSaveBtn").addEventListener("click", () => {
     persistCurrentJobNote({ showFeedback: true });
+  });
+
+  [
+    "studioReviewOverallScore",
+    "studioReviewVocalScore",
+    "studioReviewNoiseScore",
+    "studioReviewMixScore",
+  ].forEach(id => {
+    $(id)?.addEventListener("input", syncReviewScoreLabels);
+  });
+
+  $("studioReviewVerdict")?.addEventListener("change", () => {
+    renderStudioReviewNextAction(state.selectedJob, state.selectedArtifact, null, collectListeningReviewPayload());
+  });
+
+  $("studioReviewSaveBtn")?.addEventListener("click", () => {
+    saveListeningReview().catch(() => {});
   });
 }
 
@@ -1675,6 +2314,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   state.trackHistoryCollapsed = getStudioTrackHistoryCollapsed();
   state.technicalCollapsed = getStudioTechnicalCollapsed();
   await setStudioLibraryCollapsed(state.libraryCollapsed, { immediate: true });
+  renderTestRecordsToggle();
   await setDrawerCollapsed(STUDIO_TRACK_HISTORY_STATE_KEY, state.trackHistoryCollapsed, "studioTrackHistoryDrawer", "studioTrackHistoryBody", "studioTrackHistoryToggleBtn", { immediate: true });
   await setDrawerCollapsed(STUDIO_TECHNICAL_STATE_KEY, state.technicalCollapsed, "studioTechnicalDrawer", "studioTechnicalBody", "studioTechnicalToggleBtn", { immediate: true });
   bindAudioEvents();

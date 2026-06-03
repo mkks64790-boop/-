@@ -25,6 +25,7 @@
 
     <nav class="page-nav" aria-label="产品导航">
       <a class="page-nav-link is-active" href="/">Dashboard</a>
+      <a class="page-nav-link" href="#memoryLabPanel">Memory Lab</a>
       <a class="page-nav-link" href="/factory">Factory</a>
       <a class="page-nav-link" href="/studio">Studio</a>
     </nav>
@@ -89,6 +90,218 @@
 
   <main class="workspace-shell">
     <div class="workspace-main">
+      <section class="panel stage47-e2e-panel" id="stage47E2ePanel" data-mobile-zone="dashboard">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow accent">Stage47 · 闭环验收</p>
+            <h2>真实训练 / 翻唱 / Studio 闭环</h2>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn" id="stage47RefreshBtn" type="button">刷新闭环</button>
+          </div>
+        </div>
+
+        <div class="stage47-summary" id="stage47E2eSummary">正在读取真实 Stage47 状态...</div>
+        <div class="stage47-metrics">
+          <div class="stage47-metric">
+            <span>训练 job</span>
+            <strong class="mono" id="stage47TrainingJobValue">-</strong>
+          </div>
+          <div class="stage47-metric">
+            <span>新模型</span>
+            <strong class="mono" id="stage47ModelValue">-</strong>
+          </div>
+          <div class="stage47-metric">
+            <span>cover job</span>
+            <strong class="mono" id="stage47CoverJobValue">-</strong>
+          </div>
+          <div class="stage47-metric">
+            <span>Studio</span>
+            <strong id="stage47StudioValue">未就绪</strong>
+          </div>
+        </div>
+        <div class="stage47-step-grid" id="stage47E2eSteps" aria-live="polite"></div>
+        <div class="stage47-failure" id="stage47E2eFailure" hidden></div>
+        <div class="panel-actions stage47-links" id="stage47E2eLinks"></div>
+      </section>
+
+      <section class="panel training-observer-panel" id="trainingObserverPanel" data-mobile-zone="dashboard">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow accent">Training Watch</p>
+            <h2>训练观察塔</h2>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn" id="trainingObserverRefreshBtn" type="button">刷新训练状态</button>
+          </div>
+        </div>
+
+        <div class="training-observer-summary" id="trainingObserverSummary">正在读取最新训练状态...</div>
+        <div class="training-observer-metrics">
+          <div class="training-observer-metric">
+            <span>训练 job</span>
+            <strong class="mono" id="trainingObserverJobValue">-</strong>
+          </div>
+          <div class="training-observer-metric">
+            <span>当前阶段</span>
+            <strong id="trainingObserverStageValue">-</strong>
+          </div>
+          <div class="training-observer-metric">
+            <span>阶段进度</span>
+            <strong id="trainingObserverProgressValue">-</strong>
+          </div>
+          <div class="training-observer-metric">
+            <span>模型状态</span>
+            <strong id="trainingObserverModelValue">未登记</strong>
+          </div>
+        </div>
+        <div class="training-observer-log" id="trainingObserverLog"></div>
+        <div class="panel-actions training-observer-links" id="trainingObserverLinks"></div>
+      </section>
+
+      <section class="panel review-queue-panel" id="dashboardReviewQueuePanel" data-mobile-zone="dashboard">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow warm">Stage50 · 试听验收路由</p>
+            <h2>试听验收队列</h2>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn" id="dashboardReviewQueueRefreshBtn" type="button">刷新验收队列</button>
+          </div>
+        </div>
+
+        <div class="review-queue-status" id="dashboardReviewQueueStatus">正在读取真实 /api/reviews/artifacts...</div>
+        <div class="review-queue-metrics">
+          <div class="review-queue-metric">
+            <span>Can review</span>
+            <strong id="dashboardReviewUnreviewedValue">-</strong>
+          </div>
+          <div class="review-queue-metric">
+            <span>Manual QC</span>
+            <strong id="dashboardReviewNeedsWorkValue">-</strong>
+          </div>
+          <div class="review-queue-metric">
+            <span>Auto blocked</span>
+            <strong id="dashboardReviewCandidateValue">-</strong>
+          </div>
+        </div>
+        <div class="review-queue-list" id="dashboardReviewQueueList" aria-live="polite">
+          <div class="detail-empty inline">等待真实验收队列。</div>
+        </div>
+      </section>
+
+      <section class="panel memory-lab-panel" id="memoryLabPanel" data-mobile-zone="dashboard">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow warm">Memory Lab · 本地工程记忆</p>
+            <h2>阶段结论 / blocker / 报告索引</h2>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn" id="memoryLabRefreshBtn" type="button">刷新记忆</button>
+            <button class="primary-btn warm" id="memoryLabRescanBtn" type="button">重新扫描</button>
+          </div>
+        </div>
+
+        <div class="memory-lab-status" id="memoryLabStatus">正在读取真实 Memory API...</div>
+        <div class="memory-lab-summary-grid">
+          <div class="memory-lab-metric">
+            <span>memory 总数</span>
+            <strong id="memoryLabTotalValue">-</strong>
+          </div>
+          <div class="memory-lab-metric">
+            <span>pinned</span>
+            <strong id="memoryLabPinnedValue">-</strong>
+          </div>
+          <div class="memory-lab-metric">
+            <span>最新阶段</span>
+            <strong class="mono" id="memoryLabLatestStageValue">-</strong>
+          </div>
+          <div class="memory-lab-metric">
+            <span>Stage47 关键卡</span>
+            <strong id="memoryLabStage47Value">未确认</strong>
+          </div>
+        </div>
+
+        <form class="memory-lab-filter-row" id="memoryLabFilterForm">
+          <label class="wide">
+            <span>搜索</span>
+            <input id="memoryLabSearchInput" type="search" placeholder="搜索 title / summary / tag / source">
+          </label>
+          <label>
+            <span>Category</span>
+            <select id="memoryLabCategoryFilter">
+              <option value="">全部</option>
+            </select>
+          </label>
+          <label>
+            <span>Tag</span>
+            <select id="memoryLabTagFilter">
+              <option value="">全部</option>
+            </select>
+          </label>
+          <div class="filter-actions">
+            <button class="ghost-btn" id="memoryLabResetBtn" type="button">重置</button>
+          </div>
+        </form>
+
+        <div class="memory-lab-layout">
+          <div class="memory-lab-main">
+            <section class="memory-lab-block">
+              <div class="memory-lab-block-head">
+                <strong>Stage47 关键记忆</strong>
+                <span id="memoryLabStage47Summary">等待真实 Memory API</span>
+              </div>
+              <div class="memory-lab-stage47-list" id="memoryLabStage47List"></div>
+            </section>
+
+            <section class="memory-lab-block">
+              <div class="memory-lab-block-head">
+                <strong>Pinned 优先区</strong>
+                <span id="memoryLabPinnedSummary">-</span>
+              </div>
+              <div class="memory-lab-list" id="memoryLabPinnedList"></div>
+            </section>
+
+            <section class="memory-lab-block">
+              <div class="memory-lab-block-head">
+                <strong>最近 6 条</strong>
+                <span id="memoryLabRecentSummary">-</span>
+              </div>
+              <div class="memory-lab-list" id="memoryLabRecentList"></div>
+            </section>
+
+            <section class="memory-lab-block memory-lab-full-drawer" id="memoryLabFullDrawer" data-collapsed="true">
+              <div class="memory-lab-block-head">
+                <div>
+                  <strong>完整记忆列表</strong>
+                  <span id="memoryLabListSummary">默认收起，避免 Memory Lab 铺满主屏。</span>
+                </div>
+                <button
+                  class="ghost-btn drawer-toggle-btn"
+                  id="memoryLabFullToggleBtn"
+                  type="button"
+                  aria-controls="memoryLabFullBody"
+                  aria-expanded="false"
+                >展开完整列表 ▾</button>
+              </div>
+              <div class="memory-lab-full-body" id="memoryLabFullBody" hidden>
+                <div class="memory-lab-list" id="memoryLabList"></div>
+              </div>
+            </section>
+          </div>
+
+          <aside class="memory-lab-side">
+            <section class="memory-lab-block">
+              <div class="memory-lab-block-head">
+                <strong>阶段时间线</strong>
+                <span id="memoryLabTimelineSummary">-</span>
+              </div>
+              <div class="memory-lab-timeline" id="memoryLabTimeline"></div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
       <section class="panel task-panel" id="taskCenter" data-mobile-zone="dashboard">
         <div class="panel-head">
           <div>
@@ -239,6 +452,27 @@
               </div>
             </div>
 
+            <div class="detail-drawer" id="jobTrainingConfigDrawer" data-collapsed="true">
+              <div class="detail-section-head detail-drawer-head">
+                <div>
+                  <h4>训练配置</h4>
+                  <div class="detail-drawer-summary" id="jobTrainingConfigSummary">旧任务 / 默认配置。</div>
+                </div>
+                <button
+                  class="ghost-btn drawer-toggle-btn"
+                  id="jobTrainingConfigToggleBtn"
+                  type="button"
+                  aria-controls="jobTrainingConfigBody"
+                  aria-expanded="false"
+                >展开训练配置 ▾</button>
+              </div>
+              <div class="detail-drawer-body" id="jobTrainingConfigBody" hidden>
+                <div class="detail-list" id="jobTrainingConfigList">
+                  <div class="detail-empty inline">当前任务没有训练配置。</div>
+                </div>
+              </div>
+            </div>
+
             <div class="detail-drawer" id="jobStageLogsDrawer" data-collapsed="true">
               <div class="detail-section-head detail-drawer-head">
                 <div>
@@ -271,6 +505,10 @@
           </div>
         </div>
 
+        <div class="training-config-dashboard-summary" id="dashboardTrainingPresetSummary">
+          正在读取训练 preset 摘要...
+        </div>
+
         <div class="entry-grid entry-grid-three">
           <article class="entry-card">
             <div class="entry-card-head">
@@ -289,6 +527,7 @@
                 <input id="coverFileInput" type="file" accept=".wav,.mp3,.flac,.ogg,.m4a">
               </label>
               <div class="file-hint" id="coverFileHint">尚未选择文件。</div>
+              <div class="availability-note success recovered-cover-note" id="coverRecoveredModelNote" hidden></div>
               <div class="availability-note" id="coverAvailabilityNote">正在等待诊断结果...</div>
               <button class="primary-btn warm" id="coverCreateBtn" type="submit" disabled>创建 cover job</button>
             </form>

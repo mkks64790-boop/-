@@ -9,18 +9,45 @@ let availability = {
   reason: "正在等待诊断结果...",
 };
 
+function selectedModelMeta() {
+  const select = $("coverModelSelect");
+  const option = select?.selectedOptions?.[0] || null;
+  return {
+    modelId: select?.value || "",
+    checkpointRecovered: option?.dataset.checkpointRecovered === "true",
+    recoveredEpoch: option?.dataset.recoveredEpoch || "",
+    pendingRegistry: option?.dataset.pendingRegistry === "true",
+  };
+}
+
 function refreshCoverState() {
-  const selectedModelId = $("coverModelSelect").value;
-  const ready = Boolean(coverFile) && Boolean(selectedModelId) && availability.usableModelCount > 0 && availability.coverPreflightOk;
+  const modelMeta = selectedModelMeta();
+  const selectedModelId = modelMeta.modelId;
+  const ready = Boolean(coverFile) && Boolean(selectedModelId) && !modelMeta.pendingRegistry && availability.usableModelCount > 0 && availability.coverPreflightOk;
   const button = $("coverCreateBtn");
   const note = $("coverAvailabilityNote");
+  const recoveredNote = $("coverRecoveredModelNote");
+  const displayReason = modelMeta.pendingRegistry
+    ? "Training observer filled this model id, but the model library has not confirmed it as usable yet. Refresh models or wait for registration before creating cover."
+    : modelMeta.checkpointRecovered && !coverFile
+    ? "checkpoint 恢复模型已选中，请先选择歌曲文件，再手动创建 AI 翻唱。"
+    : availability.reason;
 
   button.disabled = !ready;
-  note.textContent = availability.reason;
+  note.textContent = displayReason;
   note.className = `availability-note ${ready ? "success" : availability.usableModelCount > 0 ? "warn" : "danger"}`;
+  if (recoveredNote) {
+    recoveredNote.hidden = !modelMeta.checkpointRecovered;
+    recoveredNote.textContent = modelMeta.checkpointRecovered
+      ? `checkpoint 恢复模型${modelMeta.recoveredEpoch ? ` e${modelMeta.recoveredEpoch}` : ""}，可用于试听验证。请先选择歌曲文件，再手动创建 AI 翻唱。`
+      : "";
+  }
 }
 
 export function initCoverCreate(onJobCreated) {
+  $("coverCreateBtn").textContent = "创建 AI 一键翻唱";
+  $("coverCreateForm")?.closest(".entry-card")?.querySelector("h3")?.replaceChildren("AI 一键翻唱");
+
   $("coverFileInput").addEventListener("change", event => {
     coverFile = event.target.files?.[0] || null;
     $("coverFileHint").textContent = coverFile

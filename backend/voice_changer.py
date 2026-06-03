@@ -60,7 +60,10 @@ def transform_voice(
     protect: float = 0.33,
 ) -> dict:
     """执行单次 RVC 变声并将结果落盘到任务输出目录。"""
-    from db import get_connection, get_voice_asset, update_task_status
+    try:
+        from .db import get_connection, get_voice_asset, update_task_status
+    except ImportError:
+        from db import get_connection, get_voice_asset, update_task_status
 
     fixed_vocal_path = os.path.join(OUTPUT_ROOT, task_id, "vocal_fixed.wav")
     transformed_path = os.path.join(OUTPUT_ROOT, task_id, "vocal_transformed.wav")

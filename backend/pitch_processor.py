@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import re
+import shutil
 
 # 路径发现：优先环境变量，其次常见安装目录
 def _pick_first_existing(*paths: str) -> str:
@@ -69,7 +70,10 @@ def fix_vocal_pitch(
     Returns:
         {"success": True/False, "output": path, "duration": sec, "elapsed": sec, "error": str}
     """
-    from db import get_connection, update_task_status
+    try:
+        from .db import get_connection, update_task_status
+    except ImportError:
+        from db import get_connection, update_task_status
 
     vocal_path = os.path.join(OUTPUT_ROOT, task_id, "vocal.wav")
     fixed_path = os.path.join(OUTPUT_ROOT, task_id, "vocal_fixed.wav")
@@ -141,6 +145,21 @@ def fix_vocal_pitch(
         if result.returncode != 0:
             err = _extract_error(result.stderr)
             print(f"[修音] 引擎报错: {err}")
+            if _is_safe_pitch_fallback_error(err, result.stderr):
+                fallback = _copy_vocal_as_fixed(vocal_path, fixed_path)
+                if fallback.get("success"):
+                    update_task_status(task_id, STATUS_VC_READY)
+                    duration = _get_wav_duration(fixed_path)
+                    print(f"[修音] 已降级跳过修音: {fixed_path} ({duration:.2f}s)")
+                    return {
+                        "success": True,
+                        "output": fixed_path,
+                        "duration": duration,
+                        "elapsed": elapsed,
+                        "fallback": "copy_original_vocal",
+                        "warning": err,
+                    }
+                err = fallback.get("error") or err
             update_task_status(task_id, STATUS_FAILED, err)
             return {"success": False, "error": err}
 
@@ -274,6 +293,34 @@ def _extract_error(stderr: str) -> str:
 
     lines = [l.strip() for l in clean.splitlines() if l.strip()]
     return lines[-1][:200] if lines else "未知引擎错误"
+
+
+def _is_safe_pitch_fallback_error(error: str, stderr: str = "") -> bool:
+    """Allow only the known short-frame numpy broadcast failure to bypass pitch fix."""
+    text = f"{error}\n{stderr or ''}"
+    match = re.search(
+        r"operands could not be broadcast together with shapes\s+"
+        r"\((?P<frames>\d+),\)\s+\(2048,\)\s+\((?P=frames),\)",
+        text,
+    )
+    if not match:
+        return False
+
+    frames = int(match.group("frames"))
+    return 0 < frames < 2048
+
+
+def _copy_vocal_as_fixed(vocal_path: str, fixed_path: str) -> dict:
+    try:
+        if not os.path.isfile(vocal_path):
+            return {"success": False, "error": f"降级失败，人声文件不存在: {vocal_path}"}
+        if os.path.abspath(vocal_path) == os.path.abspath(fixed_path):
+            return {"success": False, "error": "降级失败，输入输出不能是同一个文件"}
+        os.makedirs(os.path.dirname(fixed_path), exist_ok=True)
+        shutil.copyfile(vocal_path, fixed_path)
+        return {"success": True, "output": fixed_path}
+    except Exception as exc:
+        return {"success": False, "error": f"降级复制 vocal_fixed.wav 失败: {exc}"}
 
 
 def _get_wav_duration(path: str) -> float:

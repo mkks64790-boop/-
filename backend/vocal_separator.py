@@ -50,7 +50,10 @@ def split_audio(task_id: str, input_file_path: str) -> dict:
     Returns:
         {"success": True/False, "vocal": path, "instrumental": path, "duration": sec, "error": str}
     """
-    from db import update_task_status
+    try:
+        from .db import update_task_status
+    except ImportError:
+        from db import update_task_status
 
     out_dir = os.path.join(OUTPUT_ROOT, task_id)
     vocal_path = os.path.join(out_dir, "vocal.wav")
@@ -117,7 +120,13 @@ def split_audio(task_id: str, input_file_path: str) -> dict:
         # 5. 状态 → 修音中
         update_task_status(task_id, STATUS_PITCH_READY)
 
-        duration = _get_wav_duration(vocal_path)
+        duration_error = _validate_duration_preservation(input_file_path, vocal_path, instrumental_path)
+        if duration_error:
+            print(f"[鍒嗙] {duration_error}")
+            update_task_status(task_id, STATUS_FAILED, duration_error)
+            return {"success": False, "error": duration_error}
+
+        duration = _get_audio_duration(vocal_path)
         print(f"[分离] 完成: vocal={vocal_path}, instrumental={instrumental_path}")
         print(f"[分离] 人声时长: {duration:.2f}s")
 
@@ -183,15 +192,14 @@ def main():
     hop_length = 512
     model_freq = 3072
     model_frames = 256
-    chunk_seconds = 5
 
     # STFT
     stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length,
                          win_length=n_fft, window='hann', center=True)
     n_total_frames = stft.shape[1]
 
-    # 分块推理
-    frames_per_chunk = int(chunk_seconds * sr / hop_length)
+    # 分块推理: the model accepts 256 time frames. Do not crop larger 5s chunks.
+    frames_per_chunk = model_frames
     n_chunks = max(1, (n_total_frames + frames_per_chunk - 1) // frames_per_chunk)
 
     vocal_chunks = []
@@ -200,6 +208,7 @@ def main():
     for i in range(n_chunks):
         start_f = i * frames_per_chunk
         end_f = min((i + 1) * frames_per_chunk, n_total_frames)
+        actual_frames = end_f - start_f
         chunk_stft = stft[:, start_f:end_f]
 
         real = np.real(chunk_stft).astype(np.float32)
@@ -215,8 +224,7 @@ def main():
             imag = np.pad(imag, ((0, pad_f), (0, 0)))
 
         if real.shape[1] > model_frames:
-            real = real[:, :model_frames]
-            imag = imag[:, :model_frames]
+            raise RuntimeError("time chunk exceeds model_frames; chunking contract broken")
         elif real.shape[1] < model_frames:
             pad_t = model_frames - real.shape[1]
             real = np.pad(real, ((0, 0), (0, pad_t)))
@@ -226,7 +234,6 @@ def main():
         out = session.run([output_name], {input_name: inp})[0][0]
 
         # 提取 vocal (ch 0,1) 和 instrumental (ch 2,3)
-        actual_frames = end_f - start_f
         v_spec = (out[0] + 1j * out[1])[:, :actual_frames]
         i_spec = (out[2] + 1j * out[3])[:, :actual_frames]
 
@@ -245,9 +252,11 @@ def main():
         instr_spec = np.pad(instr_spec, ((0, pad_f), (0, 0)))
 
     vocal_audio = librosa.istft(vocal_spec, hop_length=hop_length,
-                                 win_length=n_fft, window='hann', center=True)
+                                 win_length=n_fft, window='hann', center=True,
+                                 length=len(audio))
     instr_audio = librosa.istft(instr_spec, hop_length=hop_length,
-                                 win_length=n_fft, window='hann', center=True)
+                                 win_length=n_fft, window='hann', center=True,
+                                 length=len(audio))
 
     vocal_path = os.path.join(args.output, "vocal.wav")
     instr_path = os.path.join(args.output, "instrumental.wav")
@@ -308,6 +317,64 @@ def _normalize_output(out_dir: str, vocal_target: str, instrumental_target: str)
             os.rename(src, vocal_target)
         elif "instrumental" in f.lower() and not os.path.exists(instrumental_target):
             os.rename(src, instrumental_target)
+
+
+def _validate_duration_preservation(input_path: str, vocal_path: str, instrumental_path: str, tolerance: float = 0.05) -> str:
+    input_duration = _get_audio_duration(input_path)
+    vocal_duration = _get_audio_duration(vocal_path)
+    instrumental_duration = _get_audio_duration(instrumental_path)
+    if input_duration <= 0 or vocal_duration <= 0 or instrumental_duration <= 0:
+        return ""
+
+    vocal_delta = abs(vocal_duration - input_duration) / input_duration
+    instrumental_delta = abs(instrumental_duration - input_duration) / input_duration
+    if vocal_delta <= tolerance and instrumental_delta <= tolerance:
+        return ""
+
+    return (
+        "duration mismatch: "
+        f"input={input_duration:.3f}s "
+        f"vocal={vocal_duration:.3f}s "
+        f"instrumental={instrumental_duration:.3f}s "
+        f"tolerance={tolerance:.0%}"
+    )
+
+
+def _get_audio_duration(path: str) -> float:
+    wav_duration = _get_wav_duration(path)
+    if wav_duration > 0:
+        return wav_duration
+
+    try:
+        import soundfile as sf
+        info = sf.info(path)
+        return float(info.frames / info.samplerate) if info.samplerate else 0.0
+    except Exception:
+        pass
+
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return float(result.stdout.strip())
+    except Exception:
+        return 0.0
+    return 0.0
 
 
 def _get_wav_duration(path: str) -> float:

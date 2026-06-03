@@ -15,6 +15,9 @@ import {
 const DETAIL_PANEL_ID = "diagnostics-detail-panel";
 const TOGGLE_BUTTON_ID = "diagnosticsDetailToggleBtn";
 const READY_NOTE_ID = "diagnosticsReadyNote";
+const DIAGNOSTICS_TITLE = "系统预检与可用性";
+const DIAGNOSTICS_DETAIL_OPEN = "收起环境依赖详情 ▴";
+const DIAGNOSTICS_DETAIL_CLOSED = "环境依赖详情 ▾";
 
 const state = {
   summary: null,
@@ -75,13 +78,18 @@ function ensureDiagnosticsShell() {
   const panel = $("diagnosticsPanel");
   if (!panel) return;
 
+  const title = panel.querySelector(".panel-head h2");
+  if (title) {
+    title.textContent = DIAGNOSTICS_TITLE;
+  }
+
   const actions = panel.querySelector(".panel-actions");
   if (actions && !$(TOGGLE_BUTTON_ID)) {
     const button = document.createElement("button");
     button.type = "button";
     button.id = TOGGLE_BUTTON_ID;
     button.className = "ghost-btn";
-    button.textContent = "查看详细环境依赖 ▾";
+    button.textContent = DIAGNOSTICS_DETAIL_CLOSED;
     button.setAttribute("aria-expanded", "false");
     actions.prepend(button);
   }
@@ -173,7 +181,7 @@ async function setDiagnosticsDetailOpen(open) {
   if (!detailPanel || !toggle) return;
 
   state.detailOpen = Boolean(open);
-  toggle.textContent = state.detailOpen ? "收起详细环境依赖 ▴" : "查看详细环境依赖 ▾";
+  toggle.textContent = state.detailOpen ? DIAGNOSTICS_DETAIL_OPEN : DIAGNOSTICS_DETAIL_CLOSED;
   toggle.setAttribute("aria-expanded", String(state.detailOpen));
   await slideToggle(detailPanel, state.detailOpen);
 }
@@ -267,10 +275,10 @@ function renderIssueSummary(summary) {
   if (!readyNote) return;
 
   if (hasIssue) {
-    readyNote.textContent = "存在阻塞项，点击“查看详细环境依赖”可查看原因和下一步建议。";
+    readyNote.textContent = "存在阻塞项，展开环境依赖详情可查看原因和下一步建议。";
     readyNote.className = `diagnostics-ready-note ${usableModelCount <= 0 ? "danger" : "warn"}`;
   } else {
-    readyNote.textContent = "系统环境 100% 就绪，可正常创建任务。";
+    readyNote.textContent = "系统环境已就绪，可以创建训练或翻唱任务。";
     readyNote.className = "diagnostics-ready-note success";
   }
 }

@@ -15,8 +15,23 @@ except ImportError:
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-LONG_SAMPLE = Path(r"C:\Users\ASUS\Desktop\干声文件\朱朱干声唱.mp3")
-SHORT_SAMPLE = Path(r"C:\Users\ASUS\Desktop\干声文件\朱朱干声.mp3")
+
+
+def _sample_path(project_relative: str, legacy_external: str) -> Path:
+    project_path = PROJECT_ROOT / project_relative
+    if project_path.exists():
+        return project_path
+    return Path(legacy_external)
+
+
+LONG_SAMPLE = _sample_path(
+    r"shared_data\material_library\authorized_dry_vocals\user\朱朱干声唱.mp3",
+    r"C:\Users\ASUS\Desktop\干声文件\朱朱干声唱.mp3",
+)
+SHORT_SAMPLE = _sample_path(
+    r"shared_data\material_library\authorized_dry_vocals\user\朱朱干声.mp3",
+    r"C:\Users\ASUS\Desktop\干声文件\朱朱干声.mp3",
+)
 HOST = os.getenv("FEISHARK_STAGE26_HOST", "127.0.0.1")
 PORT = int(os.getenv("FEISHARK_STAGE26_PORT", "8016"))
 BASE_URL = os.getenv("FEISHARK_STAGE26_BASE_URL", f"http://{HOST}:{PORT}")

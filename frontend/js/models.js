@@ -19,6 +19,9 @@ import {
 
 const MODELS_INVENTORY_STATE_KEY = "feishark_ui_models_inventory_collapsed";
 const MODEL_TECHNICAL_STATE_KEY = "feishark_ui_model_technical_collapsed";
+const TEST_RECORDS_VISIBLE_KEY = "feishark_ui_show_test_records";
+const TEST_RECORDS_EVENT = "feishark:test-records-visibility-changed";
+const COVER_MODEL_PENDING_REGISTRY_LABEL = "training observer pending registry";
 
 const state = {
   selectedModelId: null,
@@ -29,6 +32,43 @@ const state = {
   lastListSignature: "",
   lastRenderedSelection: null,
 };
+
+function modelMetadata(model = {}) {
+  if (model.metadata && typeof model.metadata === "object") return model.metadata;
+  if (!model.metadata_json) return {};
+  try {
+    return JSON.parse(model.metadata_json);
+  } catch {
+    return {};
+  }
+}
+
+function isCheckpointRecoveredModel(model = {}) {
+  const metadata = modelMetadata(model);
+  return Boolean(metadata.recovered_from_checkpoint) ||
+    /checkpoint.*恢复|恢复登记|recovered/i.test(String(model.source_summary || ""));
+}
+
+function recoveredExpName(model = {}) {
+  return modelMetadata(model).recovered_exp_name || "";
+}
+
+function recoveredEpoch(model = {}) {
+  return modelMetadata(model).recovered_epoch || "";
+}
+
+function renderRecoveredAcceptanceGuide() {
+  return `
+    <div class="recovered-acceptance-guide">
+      <strong>恢复模型验收</strong>
+      <ol>
+        <li>选择歌曲</li>
+        <li>创建 AI 翻唱</li>
+        <li>完成后打开 Studio 试听</li>
+      </ol>
+    </div>
+  `;
+}
 
 function buildModelSignature(model) {
   return [
@@ -47,6 +87,81 @@ function buildModelSignature(model) {
 
 function renderFlag(label, tone = "") {
   return `<span class="artifact-chip ${tone}">${escapeHtml(label)}</span>`;
+}
+
+function getShowTestRecords() {
+  return Boolean(loadUiState(TEST_RECORDS_VISIBLE_KEY, false));
+}
+
+function saveShowTestRecords(value) {
+  saveUiState(TEST_RECORDS_VISIBLE_KEY, Boolean(value));
+  document.dispatchEvent(new CustomEvent(TEST_RECORDS_EVENT, { detail: { visible: Boolean(value) } }));
+}
+
+function withTestRecordParams(params = {}) {
+  const visible = getShowTestRecords();
+  return {
+    ...params,
+    include_test_data: visible ? "true" : "false",
+    include_smoke: visible ? "true" : "false",
+  };
+}
+
+function buildQuery(params = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, value);
+  }
+  return search.toString() ? `?${search.toString()}` : "";
+}
+
+function recordSearchText(value = {}) {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function isTestRecord(value = {}) {
+  const text = recordSearchText(value);
+  return /(?:^|[\s_\-./\\])(?:smoke|self[_-]?check|playwright|test)(?:$|[\s_\-./\\])/i.test(text)
+    || /stage[\s_\-]*\d+/i.test(text);
+}
+
+function filterTestRecords(items = []) {
+  return getShowTestRecords() ? items : items.filter(item => !isTestRecord(item));
+}
+
+function renderTestRecordsToggle(hiddenCount = 0) {
+  const anchor = $("modelsSummary");
+  if (!anchor) return;
+  let toggle = document.getElementById("modelsTestRecordsToggle");
+  if (!toggle) {
+    toggle = document.createElement("div");
+    toggle.id = "modelsTestRecordsToggle";
+    toggle.className = "test-record-toggle";
+    anchor.insertAdjacentElement("afterend", toggle);
+  }
+
+  const visible = getShowTestRecords();
+  toggle.innerHTML = `
+    <label class="test-record-toggle-label">
+      <input id="modelsShowTestRecords" type="checkbox" ${visible ? "checked" : ""}>
+      <span>显示测试记录</span>
+    </label>
+    <span class="test-record-toggle-note">${
+      visible
+        ? "当前包含 smoke / stage / test / self_check / playwright 模型记录。"
+        : `默认隐藏测试模型${hiddenCount ? `，已隐藏 ${hiddenCount} 条。` : "。"}`
+    }</span>
+  `;
+  $("modelsShowTestRecords")?.addEventListener("change", event => {
+    saveShowTestRecords(event.target.checked);
+    refreshModels().catch(() => {});
+  });
 }
 
 function getModelsInventoryCollapsed() {
@@ -99,6 +214,11 @@ async function setModelTechnicalCollapsed(collapsed, { immediate = false } = {})
 }
 
 function getOriginSummary(model) {
+  if (isCheckpointRecoveredModel(model)) {
+    const exp = recoveredExpName(model);
+    const epoch = recoveredEpoch(model);
+    return `从失败训练恢复登记，已完成 index/model register，可用于翻唱验证。${exp ? `来源实验 ${exp}` : ""}${epoch ? ` / e${epoch}` : ""}`;
+  }
   return model.source_summary || (
     model.origin_kind === "trained_local"
       ? `来自训练任务 ${model.source_job_id || "-"}`
@@ -120,6 +240,9 @@ function getUnavailableReason(model) {
 }
 
 function getModelHeadline(model) {
+  if (isCheckpointRecoveredModel(model) && model.usable) {
+    return "从失败训练恢复登记，已完成 index/model register，可用于翻唱验证。";
+  }
   if (model.usable) {
     if (model.origin_kind === "trained_local" && model.source_job_id) {
       return `当前模型已可用于翻唱，来源于训练任务 ${model.source_job_id}。`;
@@ -134,6 +257,9 @@ function getModelHeadline(model) {
 }
 
 function getModelNextStep(model) {
+  if (isCheckpointRecoveredModel(model) && model.usable) {
+    return "下一步：可一键送入翻唱入口做试听验证，或回看来源训练任务。";
+  }
   if (model.usable) return "下一步：可一键送入翻唱入口，或回看来源训练任务。";
   if (model.origin_kind === "trained_local" && model.source_job_id) return "下一步：先回看来源训练任务，再检查当前 .pth / .index 路径。";
   if (model.exists) return "下一步：检查 .pth / .index 路径，或重新扫描模型目录。";
@@ -141,15 +267,18 @@ function getModelNextStep(model) {
 }
 
 function getModelHumanStatus(model) {
+  if (isCheckpointRecoveredModel(model) && model.usable) return "checkpoint 恢复，可用于翻唱";
   if (model.usable) return "已可用于翻唱";
   if (model.exists) return "已登记，待修复";
   return "记录不完整";
 }
 
 function renderModelCard(model) {
+  const recovered = isCheckpointRecoveredModel(model);
+  const epoch = recoveredEpoch(model);
   return `
     <button
-      class="model-item ${state.selectedModelId === model.model_id ? "is-active" : ""} ${model.usable ? "" : "is-unusable"}"
+      class="model-item ${state.selectedModelId === model.model_id ? "is-active" : ""} ${model.usable ? "" : "is-unusable"} ${recovered ? "is-checkpoint-recovered" : ""}"
       type="button"
       data-model-id="${escapeHtml(model.model_id)}"
     >
@@ -167,6 +296,9 @@ function renderModelCard(model) {
       </div>
       <div class="model-badges">
         ${renderModelOriginPill(model.origin_kind)}
+        ${recovered ? `<span class="tag checkpoint">checkpoint 恢复</span>` : ""}
+        ${recovered && epoch ? `<span class="tag checkpoint">e${escapeHtml(epoch)}</span>` : ""}
+        ${recovered && model.source_job_id ? `<span class="tag checkpoint mono">${escapeHtml(model.source_job_id)}</span>` : ""}
         ${renderFlag(model.usable ? "可用于翻唱" : "当前不可用", model.usable ? "success" : "failed")}
       </div>
       <div class="detail-note model-source-summary" title="${escapeHtml(getOriginSummary(model))}">${escapeHtml(getOriginSummary(model))}</div>
@@ -218,6 +350,9 @@ function renderEmptyModelDetail(message = "点击一个模型即可查看详情�
 function renderModelDetail(model) {
   const resolvedIndexPath = model.resolved_index_path || model.index_path || "-";
   const sourceSummary = getOriginSummary(model);
+  const recovered = isCheckpointRecoveredModel(model);
+  const expName = recoveredExpName(model);
+  const epoch = recoveredEpoch(model);
   $("modelDetailCard").innerHTML = `
     <div class="detail-summary-card">
       <div class="detail-summary-head">
@@ -228,11 +363,14 @@ function renderModelDetail(model) {
         </div>
         <div class="detail-summary-badges">
           ${renderModelOriginPill(model.origin_kind)}
+          ${recovered ? `<span class="tag checkpoint">checkpoint 恢复</span>` : ""}
+          ${recovered && epoch ? `<span class="tag checkpoint">e${escapeHtml(epoch)}</span>` : ""}
           ${renderModelStatePill(model)}
         </div>
       </div>
       <p class="detail-summary-text">${escapeHtml(getModelHeadline(model))}</p>
       <div class="detail-summary-foot">${escapeHtml(getModelNextStep(model))}</div>
+      ${recovered ? renderRecoveredAcceptanceGuide() : ""}
       ${!model.usable ? `<div class="detail-inline-callout">${escapeHtml(getUnavailableReason(model))}</div>` : ""}
       <div class="panel-actions">
         ${model.usable ? `<button class="primary-btn warm" type="button" id="modelUseForCoverBtn">用于翻唱</button>` : ""}
@@ -250,6 +388,9 @@ function renderModelDetail(model) {
       ])}
       ${renderDetailCard("来源信息", [
         renderDetailRow("来源类型", escapeHtml(modelOriginLabel(model.origin_kind))),
+        recovered ? renderDetailRow("恢复来源", "checkpoint 恢复") : "",
+        recovered && expName ? renderDetailRow("恢复实验", `<div class="mono" title="${escapeHtml(expName)}">${escapeHtml(expName)}</div>`) : "",
+        recovered && epoch ? renderDetailRow("恢复 epoch", escapeHtml(`e${epoch}`)) : "",
         renderDetailRow("来源摘要", renderDetailText(sourceSummary)),
         model.source_strategy_key ? renderDetailRow("训练策略", escapeHtml(strategyLabel(model.source_strategy_key))) : "",
         model.source_material_profile ? renderDetailRow("素材画像", escapeHtml(modelMaterialProfileLabel(model.source_material_profile))) : "",
@@ -322,20 +463,61 @@ async function loadModelDetail(modelId, { force = false } = {}) {
 
 function updateCoverModelSelect(usableModels) {
   const select = $("coverModelSelect");
+  if (!select) return;
   const previousValue = state.selectedCoverModelId || select.value;
+  const injectedOptions = Array.from(select.options || [])
+    .filter(option => option.dataset.stage56Injected === "true" || option.dataset.stage57ObserverInjected === "true")
+    .map(option => ({
+      value: option.value,
+      label: option.textContent || `${option.value} - ${COVER_MODEL_PENDING_REGISTRY_LABEL}`,
+    }))
+    .filter(option => option.value);
+  const pendingOption = injectedOptions.find(option => option.value === previousValue) || null;
   if (!usableModels.length) {
+    if (pendingOption) {
+      select.innerHTML = `
+        <option
+          value="${escapeHtml(pendingOption.value)}"
+          data-stage56-injected="true"
+          data-stage57-observer-injected="true"
+          data-pending-registry="true"
+        >${escapeHtml(pendingOption.label)}</option>
+      `;
+      select.value = pendingOption.value;
+      state.selectedCoverModelId = pendingOption.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
+    }
     select.innerHTML = `<option value="">当前没有可用模型</option>`;
     select.value = "";
     state.selectedCoverModelId = "";
     return;
   }
 
-  select.innerHTML = usableModels.map(model => `
-    <option value="${escapeHtml(model.model_id)}">${escapeHtml(model.model_name)} · ${escapeHtml(model.model_id)}</option>
-  `).join("");
+  const optionsHtml = usableModels.map(model => `
+    <option
+      value="${escapeHtml(model.model_id)}"
+      data-checkpoint-recovered="${isCheckpointRecoveredModel(model) ? "true" : "false"}"
+      data-recovered-epoch="${escapeHtml(recoveredEpoch(model))}"
+    >${escapeHtml(model.model_name)} · ${escapeHtml(model.model_id)}</option>
+  `);
+  const hasRealPrevious = usableModels.some(model => model.model_id === previousValue);
+  if (!hasRealPrevious && pendingOption) {
+    optionsHtml.push(`
+      <option
+        value="${escapeHtml(pendingOption.value)}"
+        data-stage56-injected="true"
+        data-stage57-observer-injected="true"
+        data-pending-registry="true"
+      >${escapeHtml(pendingOption.label)}</option>
+    `);
+  }
+  select.innerHTML = optionsHtml.join("");
 
-  const nextValue = usableModels.some(model => model.model_id === previousValue)
+  const nextValue = hasRealPrevious
     ? previousValue
+    : pendingOption
+      ? pendingOption.value
     : usableModels[0].model_id;
   select.value = nextValue;
   state.selectedCoverModelId = nextValue;
@@ -404,16 +586,21 @@ async function useModelForCover() {
   switchToDashboardIfNeeded();
   $("entryCenter")?.scrollIntoView({ behavior: "smooth", block: "start" });
   $("coverModelSelect")?.focus?.({ preventScroll: true });
-  showToast(`已将模型 ${model.model_name} 选入翻唱入口`, "success");
+  showToast(
+    isCheckpointRecoveredModel(model)
+      ? "已选择恢复模型，可上传歌曲进行翻唱验证"
+      : `已将模型 ${model.model_name} 选入翻唱入口`,
+    "success",
+  );
 }
 
 async function focusModelById(modelId, { scroll = true, force = true } = {}) {
   if (!modelId) return false;
+  switchToModelsTabIfNeeded();
   state.selectedModelId = modelId;
   renderModelList(state.allModels);
   const detail = await loadModelDetail(modelId, { force });
   if (detail && scroll) {
-    switchToModelsTabIfNeeded();
     $("modelPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
   return Boolean(detail);
@@ -424,8 +611,25 @@ export async function refreshModels() {
 
   try {
     state.selectedCoverModelId = state.selectedCoverModelId || $("coverModelSelect").value || "";
-    const panelModels = await getJSON(`/api/models?include_unavailable=${includeUnavailable ? "true" : "false"}`);
+    const modelParams = withTestRecordParams({ include_unavailable: includeUnavailable ? "true" : "false" });
+    const [modelsPayload, modelSummary] = await Promise.all([
+      getJSON(`/api/models${buildQuery(modelParams)}`),
+      getJSON(`/api/models/summary${buildQuery(modelParams)}`).catch(() => null),
+    ]);
+    const rawModels = Array.isArray(modelsPayload)
+      ? modelsPayload
+      : Array.isArray(modelsPayload?.items)
+        ? modelsPayload.items
+        : Array.isArray(modelsPayload?.models)
+          ? modelsPayload.models
+          : [];
+    const panelModels = filterTestRecords(rawModels);
     const usableModels = panelModels.filter(model => model.usable);
+    const summaryHiddenCount = Number(modelSummary?.hidden_test_model_count ?? modelSummary?.hidden_test_count);
+    const hiddenCount = Number.isFinite(summaryHiddenCount)
+      ? summaryHiddenCount
+      : Math.max(0, rawModels.length - panelModels.length);
+    renderTestRecordsToggle(hiddenCount);
 
     state.allModels = panelModels;
     state.usableModels = usableModels;
@@ -457,11 +661,21 @@ export async function refreshModels() {
 }
 
 export function initModels() {
+  renderTestRecordsToggle();
   setModelsInventoryCollapsed(getModelsInventoryCollapsed(), { immediate: true }).catch(() => {});
   setModelTechnicalCollapsed(getModelTechnicalCollapsed(), { immediate: true }).catch(() => {});
 
   $("modelsRefreshBtn").addEventListener("click", () => refreshModels());
   $("modelsIncludeUnavailable").addEventListener("change", () => refreshModels());
+  window.addEventListener("storage", event => {
+    if (event.key === TEST_RECORDS_VISIBLE_KEY) {
+      renderTestRecordsToggle();
+      refreshModels().catch(() => {});
+    }
+  });
+  document.addEventListener(TEST_RECORDS_EVENT, () => {
+    renderTestRecordsToggle();
+  });
   $("modelsInventoryToggleBtn").addEventListener("click", () => {
     const nextCollapsed = !getModelsInventoryCollapsed();
     setModelsInventoryCollapsed(nextCollapsed).catch(() => {});

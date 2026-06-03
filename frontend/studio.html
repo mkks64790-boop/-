@@ -135,6 +135,16 @@
           <div class="studio-effect-rack-note">
             当前导出为 copy-only 草稿：会登记新版本，但暂不执行真实 DSP/VST。
           </div>
+          <div class="studio-render-mode-control" id="studioRenderModeControl">
+            <div class="studio-render-mode-head">
+              <strong>输出模式</strong>
+              <span id="studioRenderModeHint">默认登记草稿，保存参数和版本，不改变真实音频。</span>
+            </div>
+            <div class="studio-render-mode-actions" role="group" aria-label="输出模式">
+              <button class="ghost-btn is-active" id="studioRenderModeCopyBtn" type="button" data-render-engine="copy_only">登记草稿</button>
+              <button class="ghost-btn" id="studioRenderModeFfmpegBtn" type="button" data-render-engine="ffmpeg_dsp_v0">真实渲染 v0</button>
+            </div>
+          </div>
           <div class="studio-effect-export-hint" id="studioEffectRackExportHint">
             载入带 Track、Job 和可播放 artifact 的 Studio 版本后，可导出处理版草稿。
           </div>
@@ -322,6 +332,72 @@
             <div class="studio-note-toolbar">
               <span id="studioJobNoteState">备注只保存在本机浏览器。</span>
               <button class="ghost-btn drawer-toggle-btn" id="studioJobNoteSaveBtn" type="button">保存备注</button>
+            </div>
+          </div>
+
+          <div class="studio-review-panel" id="studioReviewPanel" hidden>
+            <div class="studio-review-head">
+              <div>
+                <strong>试听验收 A/B</strong>
+                <div class="studio-inline-note">A 轨使用上方成品播放器，B 轨为原始输入参考；评分会写入当前 artifact metadata。</div>
+              </div>
+              <button class="primary-btn warm" id="studioReviewSaveBtn" type="button">保存试听验收</button>
+            </div>
+
+            <div class="studio-review-ab-grid">
+              <article class="studio-review-ab-card">
+                <span>A · 当前成品</span>
+                <strong>使用上方主播放器试听</strong>
+              </article>
+              <article class="studio-review-ab-card">
+                <span>B · 原始输入</span>
+                <audio id="studioReviewSourceAudio" controls preload="none"></audio>
+                <a class="ghost-btn drawer-toggle-btn" id="studioReviewSourceDownloadBtn" href="#" target="_blank" aria-disabled="true">下载原始输入</a>
+              </article>
+            </div>
+
+            <div class="studio-review-form-grid">
+              <label>
+                <span>验收结论</span>
+                <select id="studioReviewVerdict">
+                  <option value="unreviewed">未验收</option>
+                  <option value="needs_work">需返工</option>
+                  <option value="usable">可用</option>
+                  <option value="release_candidate">候选成品</option>
+                  <option value="rejected">废弃</option>
+                </select>
+              </label>
+              <label>
+                <span>总体 <b id="studioReviewOverallValue">未评</b></span>
+                <input id="studioReviewOverallScore" type="range" min="0" max="5" step="1" value="0">
+              </label>
+              <label>
+                <span>人声 <b id="studioReviewVocalValue">未评</b></span>
+                <input id="studioReviewVocalScore" type="range" min="0" max="5" step="1" value="0">
+              </label>
+              <label>
+                <span>底噪/电流 <b id="studioReviewNoiseValue">未评</b></span>
+                <input id="studioReviewNoiseScore" type="range" min="0" max="5" step="1" value="0">
+              </label>
+              <label>
+                <span>混音平衡 <b id="studioReviewMixValue">未评</b></span>
+                <input id="studioReviewMixScore" type="range" min="0" max="5" step="1" value="0">
+              </label>
+            </div>
+            <label class="studio-review-notes">
+              <span>验收备注</span>
+              <textarea id="studioReviewNotes" rows="3" maxlength="240" placeholder="例如：人声咬字清楚，但副歌有轻微电流音，需重跑分离或调低高频。"></textarea>
+            </label>
+            <div class="studio-review-state" id="studioReviewState">尚未保存试听验收。</div>
+            <div class="studio-review-next" id="studioReviewNextAction">
+              <div>
+                <strong>下一步动作</strong>
+                <span id="studioReviewRouteLabel">等待后端 review_route 契约。</span>
+              </div>
+              <div class="studio-review-next-actions" id="studioReviewNextActions">
+                <span class="detail-action-hint">保存或读取真实验收后显示下一步。</span>
+              </div>
+              <div class="studio-review-smoke-note" id="studioReviewSmokeNote" hidden>浏览器 smoke 记录，不是人工验收。</div>
             </div>
           </div>
         </div>

@@ -86,7 +86,10 @@ def merge_master_audio(
         {"success": True/False, "output": path, "duration": sec,
          "elapsed": sec, "error": str, "stats": {...}}
     """
-    from db import get_connection, update_task_status
+    try:
+        from .db import get_connection, update_task_status
+    except ImportError:
+        from db import get_connection, update_task_status
 
     out_dir = os.path.join(OUTPUT_ROOT, task_id)
     vocal_path = os.path.join(out_dir, "vocal_transformed.wav")
@@ -218,7 +221,15 @@ def merge_master_audio(
         sf.write(master_path, master, target_sr, subtype=TARGET_SUBTYPE)
 
         elapsed = time.time() - t0
-        duration = max_len / target_sr
+        master_info = _inspect_wav(master_path)
+        if not master_info.get("exists") or master_info.get("duration", 0.0) <= 0:
+            raise RuntimeError(f"final_master.wav invalid or missing: {master_path}")
+        if master_info.get("sample_rate") != target_sr:
+            raise RuntimeError(
+                f"final_master.wav sample_rate mismatch: "
+                f"{master_info.get('sample_rate')} != {target_sr}"
+            )
+        duration = float(master_info["duration"])
 
         # ── 11. 状态 → 完成 ──
         update_task_status(task_id, STATUS_SUCCESS)
@@ -238,6 +249,7 @@ def merge_master_audio(
                 "peak_before_limit": float(peak),
                 "sample_rate": target_sr,
                 "format": TARGET_SUBTYPE,
+                "master_info": master_info,
             },
         }
 
@@ -268,6 +280,24 @@ def _get_wav_duration(path: str) -> float:
             return frames / rate if rate else 0.0
     except Exception:
         return 0.0
+
+
+def _inspect_wav(path: str) -> dict:
+    """Return the minimal final-master contract used before artifact registration."""
+    if not os.path.isfile(path):
+        return {"exists": False, "duration": 0.0, "sample_rate": 0}
+
+    with wave.open(path, "rb") as wf:
+        frames = wf.getnframes()
+        rate = wf.getframerate()
+        return {
+            "exists": True,
+            "duration": frames / rate if rate else 0.0,
+            "sample_rate": rate,
+            "channels": wf.getnchannels(),
+            "sample_width": wf.getsampwidth(),
+            "frames": frames,
+        }
 
 
 def _print_task_status(task_id: str):

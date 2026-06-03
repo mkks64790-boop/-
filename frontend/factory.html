@@ -42,6 +42,304 @@
 
   <main class="factory-shell">
     <section class="factory-main">
+      <section class="panel factory-engine-panel" id="factoryEnginePanel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow accent">Local AI Engine</p>
+            <h2>引擎管理</h2>
+            <p class="subtitle">集中查看 RVC / UVR / SVC 适配器状态；接口未就绪时保持降级提示。</p>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn" id="factoryEngineScanBtn" type="button">重新扫描引擎</button>
+          </div>
+        </div>
+        <div class="engine-manager-summary" id="factoryEngineSummary">正在读取 Local AI Engine 状态...</div>
+        <div class="engine-manager-grid" id="factoryEngineGrid"></div>
+      </section>
+
+      <section class="panel-soft factory-review-routing" id="factoryReviewRoutingPanel" data-collapsed="true">
+        <div class="factory-section-head factory-section-head-drawer">
+          <div>
+            <h3>候选成品 / 需返工</h3>
+            <span id="factoryReviewRoutingSummary">正在读取真实 /api/reviews/artifacts...</span>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn drawer-toggle-btn" id="factoryReviewRoutingRefreshBtn" type="button">刷新验收</button>
+            <button
+              class="ghost-btn drawer-toggle-btn"
+              id="factoryReviewRoutingToggleBtn"
+              type="button"
+              aria-expanded="false"
+              aria-controls="factoryReviewRoutingBody"
+            >展开验收列表 ▾</button>
+          </div>
+        </div>
+        <div class="factory-review-routing-metrics" id="factoryReviewRoutingMetrics">
+          <span>候选成品：-</span>
+          <span>需返工：-</span>
+          <span>未验收：-</span>
+        </div>
+        <div class="factory-review-routing-body" id="factoryReviewRoutingBody" hidden>
+          <div class="factory-review-group">
+            <div class="factory-section-head compact">
+              <h4>候选成品</h4>
+              <span id="factoryReleaseCandidateSummary">release_candidate</span>
+            </div>
+            <div class="factory-list" id="factoryReleaseCandidateList"></div>
+          </div>
+          <div class="factory-review-group">
+            <div class="factory-section-head compact">
+              <h4>需返工</h4>
+              <span id="factoryNeedsWorkSummary">needs_work</span>
+            </div>
+            <div class="factory-list" id="factoryNeedsWorkList"></div>
+          </div>
+          <div class="factory-review-group">
+            <div class="factory-section-head compact">
+              <h4>未验收</h4>
+              <span id="factoryUnreviewedSummary">unreviewed</span>
+            </div>
+            <div class="factory-list" id="factoryUnreviewedList"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel-soft factory-material-library" id="factoryMaterialLibraryDrawer" data-collapsed="true">
+        <div class="factory-section-head factory-section-head-drawer">
+          <div>
+            <h3>授权素材库</h3>
+            <span id="factoryMaterialLibrarySummary">等待 /api/material-library/summary 和 /api/material-library/items，只读展示素材去向。</span>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn drawer-toggle-btn" id="factoryMaterialLibraryRefreshBtn" type="button">刷新素材库</button>
+            <button
+              class="ghost-btn drawer-toggle-btn"
+              id="factoryMaterialLibraryToggleBtn"
+              type="button"
+              aria-expanded="false"
+              aria-controls="factoryMaterialLibraryBody"
+            >展开素材库 ▾</button>
+          </div>
+        </div>
+        <div class="factory-material-flow-grid" id="factoryMaterialFlowGrid">
+          <article class="factory-material-flow-card">
+            <strong>干声训练基准</strong>
+            <p>只用于训练/调音判断：干净人声、授权干声、Sonovox demo stems。不会自动丢进 UVR 分离评测。</p>
+          </article>
+          <article class="factory-material-flow-card">
+            <strong>分离评测混音</strong>
+            <p>只用于短片段分离质检：人工放入的干净混音或合成混音。仍由 Stage52 的 /api/separation/eval/sources 控制。</p>
+          </article>
+          <article class="factory-material-flow-card">
+            <strong>隔离/废弃素材</strong>
+            <p>DJ 版、成品母带、来路不明或风险文件只展示原因，不参与训练，也不参与分离测试。</p>
+          </article>
+        </div>
+        <div class="factory-material-library-body" id="factoryMaterialLibraryBody" hidden>
+          <div class="factory-material-stats" id="factoryMaterialLibraryStats"></div>
+          <div class="factory-material-library-list" id="factoryMaterialLibraryList">
+            <div class="detail-empty inline">等待素材库接口：/api/material-library/summary、/api/material-library/items 暂不可用。</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel-soft factory-separation-lab" id="factorySeparationLabPanel">
+        <div class="factory-section-head factory-section-head-drawer">
+          <div>
+            <h3>分离质量实验室</h3>
+            <span id="factorySeparationLabSummary">只裁剪短片段做 UVR 分离质检，不训练，不跑 RVC。</span>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn drawer-toggle-btn" id="factorySeparationReloadBtn" type="button">刷新质检</button>
+            <button class="primary-btn warm" id="factorySeparationRunBtn" type="button" disabled>只裁剪 45 秒短片段，不跑整首歌</button>
+          </div>
+        </div>
+
+        <div class="separation-lab-grid">
+          <div class="separation-lab-column">
+            <div class="factory-section-head compact">
+              <h4>分离评测候选</h4>
+              <span id="factorySeparationCandidatesSummary">等待地基接口</span>
+            </div>
+            <div class="separation-candidate-list" id="factorySeparationCandidatesList">
+              <div class="detail-empty inline">等待地基接口：分离评测候选暂不可用。</div>
+            </div>
+          </div>
+
+          <div class="separation-lab-column">
+            <div class="factory-section-head compact">
+              <h4>最近 eval runs</h4>
+              <span id="factorySeparationRunsSummary">暂无 eval run</span>
+            </div>
+            <div class="separation-run-list" id="factorySeparationRunsList">
+              <div class="detail-empty inline">暂无 eval run。地基完成后会显示最近的短片段质检记录。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="separation-unlock-panel" id="factorySeparationUnlockPanel">
+          <div class="separation-unlock-card" id="factorySeparationUnlockCard">
+            <div class="separation-unlock-head">
+              <div>
+                <h4>训练解锁状态</h4>
+                <span id="factorySeparationUnlockReason">等待真实 run 指标。</span>
+              </div>
+              <strong id="factorySeparationUnlockStatus">训练锁定</strong>
+            </div>
+            <div class="separation-unlock-grid" id="factorySeparationUnlockGrid">
+              <div><span>run_id</span><strong>-</strong></div>
+              <div><span>duration_ratio</span><strong>-</strong></div>
+              <div><span>BLOCK_TRAINING</span><strong>-</strong></div>
+            </div>
+            <p id="factorySeparationUnlockNote">BLOCK_TRAINING=false 只代表分离时长门槛通过；恢复训练还需要短训练 smoke 另行验收。</p>
+          </div>
+        </div>
+
+        <div class="separation-duration-panel">
+          <div class="factory-section-head compact">
+            <h4>15/30/45 秒对照 run</h4>
+            <span id="factorySeparationDurationSummary">等待真实 run duration 证据。</span>
+          </div>
+          <div class="separation-duration-table-wrap">
+            <table class="separation-duration-table">
+              <thead>
+                <tr>
+                  <th>run_id</th>
+                  <th>clip</th>
+                  <th>original</th>
+                  <th>vocal</th>
+                  <th>instrumental</th>
+                  <th>ratio</th>
+                  <th>risk</th>
+                </tr>
+              </thead>
+              <tbody id="factorySeparationDurationTable">
+                <tr><td colspan="7">等待真实 run duration 证据。</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="separation-player-panel" id="factorySeparationPlayersPanel">
+          <div class="factory-section-head compact">
+            <h4>A/B 试听</h4>
+            <span id="factorySeparationPlayersSummary">选择一个 run 后试听原曲、人声、伴奏。</span>
+          </div>
+          <div class="separation-item-list" id="factorySeparationItemsList"></div>
+          <div class="separation-player-grid" id="factorySeparationPlayersGrid">
+            <div class="detail-empty inline separation-empty-state">等待分离产物：当前还没有可试听的三轨结果。</div>
+          </div>
+        </div>
+
+        <div class="separation-metrics-panel">
+          <div class="factory-section-head compact">
+            <h4>电流音排查指标</h4>
+            <span id="factorySeparationMetricsSummary">指标不写死 PASS，按真实 run report 原样展示。</span>
+          </div>
+          <div class="separation-metric-grid" id="factorySeparationMetrics">
+            <div class="detail-empty inline">等待地基接口：run report 暂不可用。</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel-soft factory-model-assets" id="factoryModelAssetsDrawer" data-collapsed="true">
+        <div class="factory-section-head factory-section-head-drawer">
+          <div>
+            <h3>模型资产抽屉</h3>
+            <span id="factoryModelAssetsSummary">模型库默认收起，避免挤占 Factory 首屏。</span>
+          </div>
+          <button
+            class="ghost-btn drawer-toggle-btn"
+            id="factoryModelAssetsToggleBtn"
+            type="button"
+            aria-expanded="false"
+            aria-controls="factoryModelAssetsBody"
+          >展开模型资产 ▾</button>
+        </div>
+        <div id="factoryModelAssetsBody" class="factory-model-assets-body" hidden>
+          <div id="factoryModelAssetsList" class="factory-list"></div>
+        </div>
+      </section>
+
+      <section class="panel-soft factory-rvc-models" id="factoryRvcModelsPanel" data-collapsed="true">
+        <div class="factory-section-head factory-section-head-drawer">
+          <div>
+            <h3>第三方 RVC 模型</h3>
+            <span id="factoryRvcModelsSummary">默认分页读取，不把外部模型一次铺满页面。</span>
+          </div>
+          <div class="panel-actions">
+            <button class="ghost-btn drawer-toggle-btn" id="factoryRvcModelsRefreshBtn" type="button">刷新 RVC 模型</button>
+            <button
+              class="ghost-btn drawer-toggle-btn"
+              id="factoryRvcModelsToggleBtn"
+              type="button"
+              aria-expanded="false"
+              aria-controls="factoryRvcModelsBody"
+            >展开 RVC 模型 ▾</button>
+          </div>
+        </div>
+        <div class="factory-rvc-models-body" id="factoryRvcModelsBody" hidden>
+          <div class="factory-rvc-toolbar">
+            <label>
+              <span>搜索</span>
+              <input id="factoryRvcModelSearchInput" type="search" placeholder="按模型名、pth、index 搜索">
+            </label>
+            <label>
+              <span>登记状态</span>
+              <select id="factoryRvcRegisteredFilter">
+                <option value="">全部</option>
+                <option value="true">已登记</option>
+                <option value="false">未登记</option>
+              </select>
+            </label>
+            <label>
+              <span>Index</span>
+              <select id="factoryRvcIndexFilter">
+                <option value="">全部</option>
+                <option value="true">有 index</option>
+                <option value="false">无 index</option>
+              </select>
+            </label>
+            <button class="ghost-btn" id="factoryRvcModelSearchBtn" type="button">应用筛选</button>
+          </div>
+          <div id="factoryRvcModelsList" class="factory-list"></div>
+          <div class="factory-pagination-row">
+            <button class="ghost-btn drawer-toggle-btn" id="factoryRvcModelsPrevBtn" type="button">上一页</button>
+            <span id="factoryRvcModelsPageInfo">第 1 页</span>
+            <button class="ghost-btn drawer-toggle-btn" id="factoryRvcModelsNextBtn" type="button">下一页</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel-soft factory-training-tuning" id="factoryTrainingTuningPanel">
+        <div class="factory-section-head factory-section-head-drawer">
+          <div>
+            <h3>训练调参台 v0</h3>
+            <span id="factoryTrainingTuningSummary">只做预估和解释，不自动创建训练 job。</span>
+          </div>
+          <button class="ghost-btn drawer-toggle-btn" id="factoryTrainingPresetsReloadBtn" type="button">读取预设</button>
+        </div>
+        <div class="training-preset-grid" id="factoryTrainingPresetGrid"></div>
+        <div class="training-estimate-form">
+          <label>
+            <span>素材数量</span>
+            <input id="factoryTrainingFileCountInput" type="number" min="1" value="1">
+          </label>
+          <label>
+            <span>素材总时长（分钟）</span>
+            <input id="factoryTrainingDurationInput" type="number" min="1" step="1" value="45">
+          </label>
+          <label>
+            <span>显存（GB，可选）</span>
+            <input id="factoryTrainingGpuInput" type="number" min="0" step="1" placeholder="例如 8">
+          </label>
+          <button class="primary-btn warm" id="factoryTrainingEstimateBtn" type="button">估算风险和耗时</button>
+        </div>
+        <div class="training-estimate-result" id="factoryTrainingEstimateResult">
+          选择预设后，这里会显示 epochs、batch、采样率、f0、index、GPU 风险和预计耗时。
+        </div>
+      </section>
+
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -75,7 +373,7 @@
             </form>
           </div>
 
-          <div class="factory-batch-list panel-soft" id="factoryBatchesDrawer" data-collapsed="false">
+          <div class="factory-batch-list panel-soft" id="factoryBatchesDrawer" data-collapsed="true">
             <div class="factory-section-head factory-section-head-drawer">
               <div>
                 <h3>批次列表</h3>
@@ -86,10 +384,10 @@
                 id="factoryBatchesToggleBtn"
                 type="button"
                 aria-controls="factoryBatchesBody"
-                aria-expanded="true"
-              >收起批次 ▴</button>
+                aria-expanded="false"
+              >展开批次 ▾</button>
             </div>
-            <div id="factoryBatchesBody" class="factory-batches-body">
+            <div id="factoryBatchesBody" class="factory-batches-body" hidden>
               <div id="factoryBatchesList" class="factory-list"></div>
             </div>
           </div>
