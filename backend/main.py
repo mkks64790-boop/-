@@ -170,6 +170,9 @@ try:
         evaluate_uvr_ab_readiness,
         plan_short_chain_uvr,
     )
+    from .services.stage59_listening_bridge_service import get_listening_contract_for_run
+    from .services.stage59_transient_artifact_service import get_transient_run
+    from .services.stage59_uvr_mock_execute_service import mock_execute_uvr_ab
     from .strategies.strategy_registry import resolve_train_strategy
 except ImportError:
     from db import (
@@ -296,6 +299,9 @@ except ImportError:
         evaluate_uvr_ab_readiness,
         plan_short_chain_uvr,
     )
+    from services.stage59_listening_bridge_service import get_listening_contract_for_run
+    from services.stage59_transient_artifact_service import get_transient_run
+    from services.stage59_uvr_mock_execute_service import mock_execute_uvr_ab
     from strategies.strategy_registry import resolve_train_strategy
 
 
@@ -748,6 +754,13 @@ class Stage59UvrAbReadinessRequest(BaseModel):
     skip_file_exists: bool = False
     clip_seconds: int = 45
     runner_mode: Literal["mock", "real"] = "mock"
+
+
+class Stage59UvrAbMockExecuteRequest(BaseModel):
+    entry_id: str
+    manifest_path: str | None = None
+    skip_file_exists: bool = False
+    clip_seconds: int = 45
 
 
 class TrainingRecoveryRegisterRequest(BaseModel):
@@ -1784,9 +1797,10 @@ async def post_separation_eval_run_disabled():
 @app.get("/api/stage59/short-chain/uvr-ab/contract", summary="Stage59C UVR A/B contract (dry-run + readiness)")
 async def get_stage59_uvr_ab_contract():
     return {
-        "stage": "stage59c1",
+        "stage": "stage59c2",
         "mode_default": "dry_run",
         "readiness_supported": True,
+        "mock_execute_supported": True,
         "execute_allowed": False,
         "real_execute_allowed": False,
         "execute_block_reason": STAGE59C0_EXECUTE_BLOCK_REASON,
@@ -1807,6 +1821,10 @@ async def get_stage59_uvr_ab_contract():
         ),
         "readiness_cli": (
             "python backend\\verify_stage59_uvr_ab.py --readiness --entry-id <id> "
+            "--manifest <allowed-path> --skip-file-exists"
+        ),
+        "mock_execute_cli": (
+            "python backend\\verify_stage59_uvr_ab.py --mock-execute --entry-id <id> "
             "--manifest <allowed-path> --skip-file-exists"
         ),
     }
@@ -1879,6 +1897,51 @@ async def post_stage59_uvr_ab_readiness(payload: Stage59UvrAbReadinessRequest):
         raise HTTPException(status_code=422, detail=readiness)
     readiness["real_execute_allowed"] = False
     return readiness
+
+
+@app.post(
+    "/api/stage59/short-chain/uvr-ab/mock-execute",
+    summary="Stage59C-2 mock UVR execute (metadata-only transient artifacts)",
+)
+async def post_stage59_uvr_ab_mock_execute(payload: Stage59UvrAbMockExecuteRequest):
+    from pathlib import Path
+
+    root = Path(PROJECT_ROOT)
+    manifest = _resolve_stage59_manifest_or_400(payload.manifest_path)
+    result = mock_execute_uvr_ab(
+        payload.entry_id,
+        manifest_path=manifest,
+        project_root=root,
+        clip_seconds=payload.clip_seconds,
+        check_file_exists=not payload.skip_file_exists,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result)
+    result["real_execute_allowed"] = False
+    return result
+
+
+@app.get(
+    "/api/stage59/short-chain/uvr-ab/mock-execute/{run_id}/listening-contract",
+    summary="Stage59C-2 Stage49-compatible listening contract for mock execute run",
+)
+async def get_stage59_uvr_mock_execute_listening_contract(run_id: str):
+    run_payload = get_transient_run(run_id)
+    if run_payload is None:
+        raise HTTPException(status_code=404, detail={"ok": False, "reason": "run_id_not_found"})
+    contract = get_listening_contract_for_run(run_payload)
+    if contract is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"ok": False, "reason": "listening_contract_missing"},
+        )
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "listening_contract": contract,
+        "real_execute_allowed": False,
+        "playback_enabled": False,
+    }
 
 
 @app.post("/api/stage59/short-chain/uvr-ab/execute", summary="Stage59C-0 UVR execute (blocked)")

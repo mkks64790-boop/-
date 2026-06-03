@@ -4,6 +4,7 @@ Stage59C-0/59C-1 verifier — short-chain UVR A/B dry-run and readiness harness.
 
 Default: dry-run PASS without UVR/RVC/GPU/subprocess.
 --readiness: mock runner contract (metadata-only artifacts).
+--mock-execute: 59C-2 transient artifact + listening bridge (metadata-only).
 --execute and --runner real: blocked in this stage.
 """
 from __future__ import annotations
@@ -34,6 +35,7 @@ from backend.services.short_chain_uvr_service import (  # noqa: E402
     plan_dry_run,
     select_uvr_ab_entries,
 )
+from backend.services.stage59_uvr_mock_execute_service import mock_execute_uvr_ab  # noqa: E402
 from backend.services.stage59_uvr_runner_contract import (  # noqa: E402
     REAL_RUNNER_BLOCKED_REASON,
     RunnerMode,
@@ -79,6 +81,11 @@ def main(argv: list[str] | None = None) -> int:
         help="59C-1 mock runner readiness harness (metadata-only)",
     )
     parser.add_argument(
+        "--mock-execute",
+        action="store_true",
+        help="59C-2 mock execute + transient artifact metadata (no audio files)",
+    )
+    parser.add_argument(
         "--runner",
         choices=[RunnerMode.MOCK.value, RunnerMode.REAL.value],
         default=RunnerMode.MOCK.value,
@@ -112,6 +119,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.readiness:
         return _run_readiness(args, manifest_path=manifest_path, root=root, check_files=check_files)
+
+    if args.mock_execute:
+        return _run_mock_execute(args, manifest_path=manifest_path, root=root, check_files=check_files)
 
     try:
         data = load_manifest(manifest_path)
@@ -336,6 +346,89 @@ def _run_readiness(
         print(f"entry_id={args.entry_id}")
         contracts = readiness.get("artifact_contracts") or []
         print(f"artifact_contracts={len(contracts)}")
+        print("STAGE59_UVR_AB PASS")
+    return 0
+
+
+def _run_mock_execute(
+    args: argparse.Namespace,
+    *,
+    manifest_path: Path,
+    root: Path,
+    check_files: bool,
+) -> int:
+    if not args.entry_id:
+        _emit(
+            args,
+            {
+                "status": "FAIL",
+                "reason": "entry_id_required_for_mock_execute",
+                "exit_code": 1,
+            },
+            text="STAGE59_UVR_AB FAIL entry_id_required_for_mock_execute",
+        )
+        return 1
+
+    if args.execute:
+        return _fail_execute_blocked(
+            args,
+            manifest_path=manifest_path,
+            entry_ids=[args.entry_id],
+            reason=STAGE59C0_EXECUTE_BLOCK_REASON,
+        )
+
+    if args.runner == RunnerMode.REAL.value:
+        return _fail_execute_blocked(
+            args,
+            manifest_path=manifest_path,
+            entry_ids=[args.entry_id],
+            reason=REAL_RUNNER_BLOCKED_REASON,
+        )
+
+    result = mock_execute_uvr_ab(
+        args.entry_id,
+        manifest_path=manifest_path,
+        project_root=root,
+        check_file_exists=check_files,
+    )
+    if not result.get("ok"):
+        _emit(
+            args,
+            {
+                "status": "FAIL",
+                "reason": result.get("blocked_reason", "mock_execute_blocked"),
+                "manifest": str(manifest_path),
+                "mock_execute": result,
+                "exit_code": 1,
+            },
+            text=f"STAGE59_UVR_AB FAIL {result.get('blocked_reason')}",
+        )
+        return 1
+
+    payload = {
+        "status": "PASS",
+        "mode": "mock_execute",
+        "schema_version": SCHEMA_VERSION,
+        "manifest": str(manifest_path),
+        "entry_id": args.entry_id,
+        "run_id": result.get("run_id"),
+        "mock_execute": result,
+        "artifact_records": result.get("artifact_records"),
+        "listening_contract": result.get("listening_contract"),
+        "real_execute_allowed": False,
+        "audio_files_written": False,
+        "exit_code": 0,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("STAGE59_UVR_AB")
+        print(f"manifest={manifest_path}")
+        print("mode=mock_execute real_execute_allowed=false audio_files_written=false")
+        print(f"entry_id={args.entry_id}")
+        print(f"run_id={result.get('run_id')}")
+        records = result.get("artifact_records") or []
+        print(f"artifact_records={len(records)}")
         print("STAGE59_UVR_AB PASS")
     return 0
 

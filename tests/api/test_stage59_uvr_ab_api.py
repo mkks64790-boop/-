@@ -71,8 +71,9 @@ def test_uvr_ab_contract_endpoint(client):
     resp = client.get("/api/stage59/short-chain/uvr-ab/contract")
     assert resp.status_code == 200
     payload = resp.json()
-    assert payload["stage"] == "stage59c1"
+    assert payload["stage"] == "stage59c2"
     assert payload["readiness_supported"] is True
+    assert payload["mock_execute_supported"] is True
     assert payload["execute_allowed"] is False
     assert payload["execute_block_reason"] == STAGE59C0_EXECUTE_BLOCK_REASON
     assert payload["safety"]["uvr_subprocess"] is False
