@@ -492,6 +492,7 @@ def list_models(
             "source_file_count": enriched.get("source_file_count"),
             "source_duration_label": enriched.get("source_duration_label") or "",
             "source_summary": enriched.get("source_summary") or "",
+            "lifecycle_state": enriched.get("lifecycle_state") or infer_voice_model_lifecycle(row_dict),
             "created_at": enriched.get("created_at") or "",
             "updated_at": enriched.get("updated_at") or "",
         }

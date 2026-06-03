@@ -98,10 +98,12 @@ def infer_job_artifact_lifecycle(
     artifact_row: dict,
     *,
     job_row: dict | None = None,
+    use_stored: bool = True,
 ) -> str:
-    stored = normalize_lifecycle_state(artifact_row.get("lifecycle_state"))
-    if stored:
-        return stored
+    if use_stored:
+        stored = normalize_lifecycle_state(artifact_row.get("lifecycle_state"))
+        if stored:
+            return stored
 
     metadata = parse_metadata(artifact_row.get("metadata_json"))
     if metadata.get("lifecycle_state"):
@@ -127,10 +129,11 @@ def infer_job_artifact_lifecycle(
     return LIFECYCLE_ACTIVE
 
 
-def infer_audio_asset_lifecycle(asset_row: dict, *, job_row: dict | None = None) -> str:
-    stored = normalize_lifecycle_state(asset_row.get("lifecycle_state"))
-    if stored:
-        return stored
+def infer_audio_asset_lifecycle(asset_row: dict, *, job_row: dict | None = None, use_stored: bool = True) -> str:
+    if use_stored:
+        stored = normalize_lifecycle_state(asset_row.get("lifecycle_state"))
+        if stored:
+            return stored
 
     if is_test_data_job(job_row):
         return LIFECYCLE_TEST_DATA
@@ -143,10 +146,11 @@ def infer_audio_asset_lifecycle(asset_row: dict, *, job_row: dict | None = None)
     return LIFECYCLE_ACTIVE
 
 
-def infer_voice_model_lifecycle(model_row: dict) -> str:
-    stored = normalize_lifecycle_state(model_row.get("lifecycle_state"))
-    if stored:
-        return stored
+def infer_voice_model_lifecycle(model_row: dict, *, use_stored: bool = True) -> str:
+    if use_stored:
+        stored = normalize_lifecycle_state(model_row.get("lifecycle_state"))
+        if stored:
+            return stored
 
     if is_test_data_model(model_row):
         return LIFECYCLE_TEST_DATA
@@ -173,6 +177,20 @@ def lifecycle_blocks_download(state: str) -> bool:
 def should_default_hide_lifecycle(state: str | None) -> bool:
     """Default product lists hide test_data and purged rows (lifecycle authority)."""
     return normalize_lifecycle_state(state) in {LIFECYCLE_TEST_DATA, LIFECYCLE_PURGED}
+
+
+def should_backfill_lifecycle_state(stored_raw: str | None, inferred: str) -> bool:
+    """
+    Legacy DB rows get DEFAULT 'active' on ALTER; skip backfill only when stored is
+    a non-active explicit state. Re-infer when stored is active but inference differs.
+    """
+    stored = normalize_lifecycle_state(stored_raw)
+    inferred_norm = normalize_lifecycle_state(inferred) or LIFECYCLE_ACTIVE
+    if not stored:
+        return True
+    if stored == LIFECYCLE_ACTIVE and inferred_norm != LIFECYCLE_ACTIVE:
+        return True
+    return False
 
 
 def is_valid_lifecycle_transition(current: str, target: str) -> bool:
@@ -308,9 +326,11 @@ def backfill_lifecycle_states(conn) -> dict[str, int]:
     ).fetchall()
     for row in artifact_rows:
         row_dict = dict(row)
-        if normalize_lifecycle_state(row_dict.get("lifecycle_state")):
+        state = infer_job_artifact_lifecycle(
+            row_dict, job_row=job_for(row_dict["job_id"]), use_stored=False
+        )
+        if not should_backfill_lifecycle_state(row_dict.get("lifecycle_state"), state):
             continue
-        state = infer_job_artifact_lifecycle(row_dict, job_row=job_for(row_dict["job_id"]))
         conn.execute(
             "UPDATE job_artifacts SET lifecycle_state = ? WHERE artifact_id = ?",
             (state, row_dict["artifact_id"]),
@@ -322,9 +342,11 @@ def backfill_lifecycle_states(conn) -> dict[str, int]:
     ).fetchall()
     for row in audio_rows:
         row_dict = dict(row)
-        if normalize_lifecycle_state(row_dict.get("lifecycle_state")):
+        state = infer_audio_asset_lifecycle(
+            row_dict, job_row=job_for(row_dict["job_id"]), use_stored=False
+        )
+        if not should_backfill_lifecycle_state(row_dict.get("lifecycle_state"), state):
             continue
-        state = infer_audio_asset_lifecycle(row_dict, job_row=job_for(row_dict["job_id"]))
         conn.execute(
             "UPDATE audio_assets SET lifecycle_state = ? WHERE asset_id = ?",
             (state, row_dict["asset_id"]),
@@ -336,9 +358,9 @@ def backfill_lifecycle_states(conn) -> dict[str, int]:
     ).fetchall()
     for row in model_rows:
         row_dict = dict(row)
-        if normalize_lifecycle_state(row_dict.get("lifecycle_state")):
+        state = infer_voice_model_lifecycle(row_dict, use_stored=False)
+        if not should_backfill_lifecycle_state(row_dict.get("lifecycle_state"), state):
             continue
-        state = infer_voice_model_lifecycle(row_dict)
         conn.execute(
             "UPDATE voice_models SET lifecycle_state = ? WHERE voice_model_id = ?",
             (state, row_dict["voice_model_id"]),
@@ -354,9 +376,9 @@ def backfill_lifecycle_states(conn) -> dict[str, int]:
 
     for row in material_rows:
         row_dict = dict(row)
-        if normalize_lifecycle_state(row_dict.get("lifecycle_state")):
-            continue
         state = retention_status_to_lifecycle(row_dict.get("retention_status"))
+        if not should_backfill_lifecycle_state(row_dict.get("lifecycle_state"), state):
+            continue
         conn.execute(
             "UPDATE material_assets SET lifecycle_state = ? WHERE material_id = ?",
             (state, row_dict["material_id"]),

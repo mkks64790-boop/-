@@ -524,6 +524,7 @@ class VoiceAssetResponse(BaseModel):
     source_duration_label: str = ""
     source_summary: str = ""
     filter_reason: str = ""
+    lifecycle_state: str = "active"
     created_at: str = ""
     updated_at: str = ""
 

@@ -10,6 +10,7 @@ from backend.services.lifecycle_service import (
     lifecycle_allows_file_delete,
     retention_status_to_lifecycle,
     resolve_register_job_artifact_lifecycle,
+    should_backfill_lifecycle_state,
     should_default_hide_lifecycle,
 )
 
