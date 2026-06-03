@@ -160,6 +160,16 @@ try:
         RETENTION_TO_LIFECYCLE,
         update_job_artifact_lifecycle_state,
     )
+    from .services.short_chain_manifest_service import (
+        ManifestPathSafetyError,
+        default_manifest_path,
+        resolve_safe_manifest_path,
+    )
+    from .services.short_chain_uvr_service import (
+        STAGE59C0_EXECUTE_BLOCK_REASON,
+        evaluate_uvr_ab_readiness,
+        plan_short_chain_uvr,
+    )
     from .strategies.strategy_registry import resolve_train_strategy
 except ImportError:
     from db import (
@@ -275,6 +285,16 @@ except ImportError:
         LIFECYCLE_STATES,
         RETENTION_TO_LIFECYCLE,
         update_job_artifact_lifecycle_state,
+    )
+    from services.short_chain_manifest_service import (
+        ManifestPathSafetyError,
+        default_manifest_path,
+        resolve_safe_manifest_path,
+    )
+    from services.short_chain_uvr_service import (
+        STAGE59C0_EXECUTE_BLOCK_REASON,
+        evaluate_uvr_ab_readiness,
+        plan_short_chain_uvr,
     )
     from strategies.strategy_registry import resolve_train_strategy
 
@@ -712,6 +732,22 @@ class ArtifactListeningReviewRequest(BaseModel):
 
 class ArtifactLifecyclePatchRequest(BaseModel):
     lifecycle_state: str
+
+
+class Stage59UvrAbPlanRequest(BaseModel):
+    entry_id: str | None = None
+    manifest_path: str | None = None
+    skip_file_exists: bool = False
+    clip_seconds: int = 45
+    limit: int = 1
+
+
+class Stage59UvrAbReadinessRequest(BaseModel):
+    entry_id: str
+    manifest_path: str | None = None
+    skip_file_exists: bool = False
+    clip_seconds: int = 45
+    runner_mode: str = "mock"
 
 
 class TrainingRecoveryRegisterRequest(BaseModel):
@@ -1741,6 +1777,120 @@ async def post_separation_eval_run_disabled():
             "code": "separation_eval_execute_disabled",
             "message": "Separation eval execution is CLI-only for safety. Use backend\\verify_stage45r_separation_quality_audit.py --execute with explicit caps.",
             "safe_cli": "python backend\\verify_stage45r_separation_quality_audit.py --execute --limit 3 --clip-seconds 45",
+        },
+    )
+
+
+@app.get("/api/stage59/short-chain/uvr-ab/contract", summary="Stage59C UVR A/B contract (dry-run + readiness)")
+async def get_stage59_uvr_ab_contract():
+    return {
+        "stage": "stage59c1",
+        "mode_default": "dry_run",
+        "readiness_supported": True,
+        "execute_allowed": False,
+        "real_execute_allowed": False,
+        "execute_block_reason": STAGE59C0_EXECUTE_BLOCK_REASON,
+        "entry_id_only": True,
+        "allowed_manifest_prefixes": [
+            "shared_data/materials/stage59/short_chain_manifest.json",
+            "docs/agent-md/evidence/",
+            "shared_data/materials/stage59/",
+        ],
+        "safety": {
+            "uvr_subprocess": False,
+            "rvc_inference": False,
+            "gpu_required": False,
+        },
+        "safe_cli": (
+            "python backend\\verify_stage59_uvr_ab.py --dry-run --manifest <allowed-path> "
+            "--skip-file-exists"
+        ),
+        "readiness_cli": (
+            "python backend\\verify_stage59_uvr_ab.py --readiness --entry-id <id> "
+            "--manifest <allowed-path> --skip-file-exists"
+        ),
+    }
+
+
+def _resolve_stage59_manifest_or_400(manifest_path: str | None):
+    from pathlib import Path
+
+    root = Path(PROJECT_ROOT)
+    try:
+        return resolve_safe_manifest_path(manifest_path, project_root=root)
+    except ManifestPathSafetyError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"ok": False, "blocked": True, "blocked_reason": exc.reason},
+        ) from exc
+
+
+@app.post("/api/stage59/short-chain/uvr-ab/plan", summary="Stage59C UVR A/B dry-run plan (manifest entry_id only)")
+async def post_stage59_uvr_ab_plan(payload: Stage59UvrAbPlanRequest):
+    from pathlib import Path
+
+    root = Path(PROJECT_ROOT)
+    manifest = _resolve_stage59_manifest_or_400(payload.manifest_path)
+    result = plan_short_chain_uvr(
+        payload.entry_id,
+        manifest_path=manifest,
+        project_root=root,
+        clip_seconds=payload.clip_seconds,
+        dry_run=True,
+        execute=False,
+        limit=payload.limit,
+        check_file_exists=not payload.skip_file_exists,
+        raise_on_block=False,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result)
+    result["real_execute_allowed"] = False
+    return result
+
+
+@app.post(
+    "/api/stage59/short-chain/uvr-ab/readiness",
+    summary="Stage59C-1 UVR A/B readiness harness (mock metadata-only)",
+)
+async def post_stage59_uvr_ab_readiness(payload: Stage59UvrAbReadinessRequest):
+    from pathlib import Path
+
+    root = Path(PROJECT_ROOT)
+    manifest = _resolve_stage59_manifest_or_400(payload.manifest_path)
+    if payload.runner_mode == "real":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "ok": False,
+                "blocked": True,
+                "reason": "real_uvr_runner_requires_manual_approval",
+                "real_execute_allowed": False,
+            },
+        )
+    readiness = evaluate_uvr_ab_readiness(
+        payload.entry_id,
+        manifest_path=manifest,
+        project_root=root,
+        clip_seconds=payload.clip_seconds,
+        runner_mode=payload.runner_mode,
+        check_file_exists=not payload.skip_file_exists,
+    )
+    if not readiness.get("ok"):
+        raise HTTPException(status_code=422, detail=readiness)
+    readiness["real_execute_allowed"] = False
+    return readiness
+
+
+@app.post("/api/stage59/short-chain/uvr-ab/execute", summary="Stage59C-0 UVR execute (blocked)")
+async def post_stage59_uvr_ab_execute_blocked():
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "ok": False,
+            "blocked": True,
+            "reason": STAGE59C0_EXECUTE_BLOCK_REASON,
+            "message": "UVR A/B execute is blocked in stage59c0. Use verify_stage59_uvr_ab.py dry-run only.",
+            "safe_cli": "python backend\\verify_stage59_uvr_ab.py --dry-run --manifest <path>",
         },
     )
 

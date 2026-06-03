@@ -53,6 +53,16 @@ REQUIRED_ENTRY_KEYS = frozenset(
 )
 
 DEFAULT_MANIFEST_REL = Path("shared_data") / "materials" / "stage59" / "short_chain_manifest.json"
+EVIDENCE_MANIFEST_PREFIX = Path("docs") / "agent-md" / "evidence"
+STAGE59_MATERIALS_PREFIX = Path("shared_data") / "materials" / "stage59"
+
+
+class ManifestPathSafetyError(ValueError):
+    """Raised when a manifest path is outside allowed Stage59 locations."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 @dataclass
@@ -71,6 +81,66 @@ def project_root_from_here() -> Path:
 def default_manifest_path(project_root: Path | None = None) -> Path:
     root = project_root or project_root_from_here()
     return root / DEFAULT_MANIFEST_REL
+
+
+def _manifest_input_has_traversal(raw: str) -> bool:
+    normalized = raw.replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part not in ("", ".")]
+    return ".." in parts
+
+
+def _relative_under_allowed_prefix(rel: Path) -> bool:
+    rel_posix = rel.as_posix()
+    default_posix = DEFAULT_MANIFEST_REL.as_posix()
+    if rel_posix == default_posix:
+        return True
+    evidence_posix = EVIDENCE_MANIFEST_PREFIX.as_posix()
+    if rel_posix == evidence_posix or rel_posix.startswith(f"{evidence_posix}/"):
+        return True
+    stage59_posix = STAGE59_MATERIALS_PREFIX.as_posix()
+    if rel_posix == stage59_posix or rel_posix.startswith(f"{stage59_posix}/"):
+        return True
+    return False
+
+
+def resolve_safe_manifest_path(
+    manifest_path: Path | str | None,
+    *,
+    project_root: Path | None = None,
+) -> Path:
+    """
+    Resolve a manifest path that must stay inside the project and allowed prefixes.
+
+    Allowed:
+    - default ``shared_data/materials/stage59/short_chain_manifest.json``
+    - ``docs/agent-md/evidence/**``
+    - ``shared_data/materials/stage59/**``
+    """
+    root = (project_root or project_root_from_here()).resolve()
+    if manifest_path is None:
+        return default_manifest_path(root)
+
+    raw_text = str(manifest_path).strip()
+    if not raw_text:
+        return default_manifest_path(root)
+    if _manifest_input_has_traversal(raw_text):
+        raise ManifestPathSafetyError("manifest_path_traversal")
+
+    candidate_input = Path(raw_text)
+    if candidate_input.is_absolute():
+        resolved = candidate_input.resolve()
+    else:
+        resolved = (root / candidate_input).resolve()
+
+    try:
+        rel = resolved.relative_to(root)
+    except ValueError as exc:
+        raise ManifestPathSafetyError("manifest_path_outside_project") from exc
+
+    if not _relative_under_allowed_prefix(rel):
+        raise ManifestPathSafetyError("manifest_path_not_allowed")
+
+    return resolved
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
@@ -305,6 +375,19 @@ def evaluate_short_chain_gate(
     result.ok = False
     result.errors.append("no_approved_short_chain_entries")
     return result
+
+
+def build_short_chain_whitelist(
+    data: dict[str, Any],
+    *,
+    project_root: Path | None = None,
+    check_file_exists: bool = True,
+) -> frozenset[str]:
+    """59C/59D dry-run runner whitelist: only gate-approved manifest entry ids."""
+    gate = evaluate_short_chain_gate(
+        data, project_root=project_root, check_file_exists=check_file_exists
+    )
+    return frozenset(gate.approved_entry_ids)
 
 
 def summarize_manifest(
