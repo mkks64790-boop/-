@@ -316,6 +316,7 @@ def summarize_manifest(
     root = project_root or project_root_from_here()
     gate = evaluate_short_chain_gate(data, project_root=root, check_file_exists=check_file_exists)
     entries = [entry for entry in (data.get("entries") or []) if isinstance(entry, dict)]
+    policy = data.get("rights_policy") if isinstance(data.get("rights_policy"), dict) else {}
 
     return {
         "schema_version": data.get("schema_version"),

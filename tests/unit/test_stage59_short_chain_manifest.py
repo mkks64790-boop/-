@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,7 @@ from backend.services.short_chain_manifest_service import (
     evaluate_short_chain_gate,
     load_manifest,
     rights_gate_allows_entry,
+    summarize_manifest,
     validate_manifest,
     validate_manifest_structure,
 )
@@ -124,6 +127,41 @@ def test_redacted_template_schema_valid(tmp_path: Path):
     gate = evaluate_short_chain_gate(data, project_root=tmp_path, check_file_exists=False)
     assert gate.approved_entry_ids == ["stage59_redacted_cover_source"]
     assert "stage59_redacted_pending_dry_vocal" in gate.blocked_entry_ids
+
+
+def test_summary_includes_rights_policy_without_name_error(tmp_path: Path):
+    redacted = (
+        Path(__file__).resolve().parents[2]
+        / "docs"
+        / "agent-md"
+        / "evidence"
+        / "stage59-short-chain-manifest.redacted.json"
+    )
+    data = load_manifest(redacted)
+    summary = summarize_manifest(data, project_root=tmp_path, check_file_exists=False)
+    assert summary["rights_policy"]["require_license_approved"] is True
+    assert summary["approved_count"] == 1
+
+
+def test_verifier_script_redacted_template_passes_from_repo_root():
+    root = Path(__file__).resolve().parents[2]
+    script = root / "backend" / "verify_stage59_short_chain_manifest.py"
+    manifest = root / "docs" / "agent-md" / "evidence" / "stage59-short-chain-manifest.redacted.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--manifest",
+            str(manifest),
+            "--skip-file-exists",
+        ],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "STAGE59_SHORT_CHAIN PASS" in result.stdout
 
 
 def test_intended_chain_rejects_unknown_step():
