@@ -23,10 +23,12 @@ import json
 import mimetypes
 import uuid
 import time
+import hashlib
 import traceback
 import sys
 import threading
 from typing import List
+from urllib.parse import urlencode
 
 # 兼容模块内部继续使用 `from db import ...` 这类旧导入方式
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -48,9 +50,24 @@ try:
         init_db, get_connection, update_task_status, recover_stale_compute_state,
     )
     from .voice_changer import get_engine_summary, get_rvc_service_status
-    from .services.asset_service import get_final_job_artifact, get_job_artifact, list_job_artifacts, register_audio_asset
+    from .model_trainer import RVC_PYTHON, RVC_WEBUI_DIR, TRAIN_GPUS
+    from .services.asset_service import (
+        ARTIFACT_QUALITY_VERDICTS,
+        LISTENING_REVIEW_VERDICTS,
+        add_listening_review_summary,
+        get_final_cover_artifact_review_contract,
+        get_final_job_artifact,
+        artifact_allows_download,
+        get_job_artifact,
+        get_job_artifact_review,
+        resolve_project_file_path,
+        list_final_cover_review_artifacts,
+        list_job_artifacts,
+        register_audio_asset,
+        update_job_artifact_review,
+    )
     from .services.audit_service import list_audit_events
-    from .services.batch_service import create_batch, get_batch, import_tracks_to_batch, list_batches
+    from .services.batch_service import create_batch, get_batch, hidden_test_batch_count, import_tracks_to_batch, list_batches
     from .services.dataset_service import (
         create_dataset_record,
         discard_job_workspace,
@@ -74,8 +91,10 @@ try:
         get_job,
         get_job_row,
         get_next_pending_job,
+        hidden_test_job_count,
         job_summary,
         list_jobs,
+        normalize_job_status,
         reserve_job,
         release_job,
         retry_job,
@@ -87,6 +106,7 @@ try:
     from .services.model_service import (
         get_voice_model_by_source_job,
         get_voice_model_detail,
+        hidden_test_model_count,
         import_voice_model,
         list_models,
         rescan_voice_models,
@@ -99,19 +119,71 @@ try:
         extract_lyrics,
         promote_lyric_timeline,
     )
-    from .services.track_service import get_track, get_track_current_master, get_track_job_entry, list_track_jobs, list_track_studio_versions, list_tracks, set_track_current_master, update_track
+    from .services.memory_service import (
+        list_memories,
+        memory_summary,
+        patch_memory,
+        rescan_agent_reports,
+        upsert_memory,
+    )
+    from .services.material_library_service import (
+        material_hygiene_summary,
+        material_library_items,
+        material_library_summary,
+        scan_material_library,
+    )
+    from .services.track_service import get_track, get_track_current_master, get_track_job_entry, hidden_test_track_count, list_track_jobs, list_track_studio_versions, list_tracks, set_track_current_master, update_track
     from .services.preflight_service import run_cover_preflight, run_train_preflight
+    from .services.engine_manager_service import get_engine, list_engines, list_rvc_models, scan_engines
+    from .services.separation_eval_service import discover_sources as discover_separation_eval_sources
+    from .services.separation_eval_service import get_eval_run as get_separation_eval_run
+    from .services.separation_eval_service import list_eval_runs as list_separation_eval_runs
+    from .services.separation_eval_service import resolve_eval_artifact as resolve_separation_eval_artifact
+    from .services.training_tuning_service import (
+        estimate_training,
+        list_training_presets,
+        normalize_training_config,
+        training_config_summary,
+    )
+    from .services.training_gpu_service import get_training_gpu_status
+    from .services.training_observer_service import latest_training_observer, training_observer
     from .services.stage_log_service import list_stage_logs, log_stage
+    from .services.training_runtime_guard import extract_exp_name_from_job, inspect_training_checkpoint, summarize_training_error
+    from .services.training_recovery_service import (
+        TrainingRecoveryError,
+        get_training_recovery_plan,
+        register_training_recovery,
+    )
     from .services.studio_effect_service import StudioEffectExportError, export_effect_rack_draft, get_effect_rack_capabilities
+    from .services.lifecycle_service import (
+        LIFECYCLE_STATES,
+        RETENTION_TO_LIFECYCLE,
+        update_job_artifact_lifecycle_state,
+    )
     from .strategies.strategy_registry import resolve_train_strategy
 except ImportError:
     from db import (
         init_db, get_connection, update_task_status, recover_stale_compute_state,
     )
     from voice_changer import get_engine_summary, get_rvc_service_status
-    from services.asset_service import get_final_job_artifact, get_job_artifact, list_job_artifacts, register_audio_asset
+    from model_trainer import RVC_PYTHON, RVC_WEBUI_DIR, TRAIN_GPUS
+    from services.asset_service import (
+        ARTIFACT_QUALITY_VERDICTS,
+        LISTENING_REVIEW_VERDICTS,
+        add_listening_review_summary,
+        get_final_cover_artifact_review_contract,
+        get_final_job_artifact,
+        artifact_allows_download,
+        get_job_artifact,
+        get_job_artifact_review,
+        resolve_project_file_path,
+        list_final_cover_review_artifacts,
+        list_job_artifacts,
+        register_audio_asset,
+        update_job_artifact_review,
+    )
     from services.audit_service import list_audit_events
-    from services.batch_service import create_batch, get_batch, import_tracks_to_batch, list_batches
+    from services.batch_service import create_batch, get_batch, hidden_test_batch_count, import_tracks_to_batch, list_batches
     from services.dataset_service import (
         create_dataset_record,
         discard_job_workspace,
@@ -135,8 +207,10 @@ except ImportError:
         get_job,
         get_job_row,
         get_next_pending_job,
+        hidden_test_job_count,
         job_summary,
         list_jobs,
+        normalize_job_status,
         reserve_job,
         release_job,
         retry_job,
@@ -148,6 +222,7 @@ except ImportError:
     from services.model_service import (
         get_voice_model_by_source_job,
         get_voice_model_detail,
+        hidden_test_model_count,
         import_voice_model,
         list_models,
         rescan_voice_models,
@@ -160,10 +235,47 @@ except ImportError:
         extract_lyrics,
         promote_lyric_timeline,
     )
-    from services.track_service import get_track, get_track_current_master, get_track_job_entry, list_track_jobs, list_track_studio_versions, list_tracks, set_track_current_master, update_track
+    from services.memory_service import (
+        list_memories,
+        memory_summary,
+        patch_memory,
+        rescan_agent_reports,
+        upsert_memory,
+    )
+    from services.material_library_service import (
+        material_hygiene_summary,
+        material_library_items,
+        material_library_summary,
+        scan_material_library,
+    )
+    from services.track_service import get_track, get_track_current_master, get_track_job_entry, hidden_test_track_count, list_track_jobs, list_track_studio_versions, list_tracks, set_track_current_master, update_track
     from services.preflight_service import run_cover_preflight, run_train_preflight
+    from services.engine_manager_service import get_engine, list_engines, list_rvc_models, scan_engines
+    from services.separation_eval_service import discover_sources as discover_separation_eval_sources
+    from services.separation_eval_service import get_eval_run as get_separation_eval_run
+    from services.separation_eval_service import list_eval_runs as list_separation_eval_runs
+    from services.separation_eval_service import resolve_eval_artifact as resolve_separation_eval_artifact
+    from services.training_tuning_service import (
+        estimate_training,
+        list_training_presets,
+        normalize_training_config,
+        training_config_summary,
+    )
+    from services.training_gpu_service import get_training_gpu_status
+    from services.training_observer_service import latest_training_observer, training_observer
     from services.stage_log_service import list_stage_logs, log_stage
+    from services.training_runtime_guard import extract_exp_name_from_job, inspect_training_checkpoint, summarize_training_error
+    from services.training_recovery_service import (
+        TrainingRecoveryError,
+        get_training_recovery_plan,
+        register_training_recovery,
+    )
     from services.studio_effect_service import StudioEffectExportError, export_effect_rack_draft, get_effect_rack_capabilities
+    from services.lifecycle_service import (
+        LIFECYCLE_STATES,
+        RETENTION_TO_LIFECYCLE,
+        update_job_artifact_lifecycle_state,
+    )
     from strategies.strategy_registry import resolve_train_strategy
 
 
@@ -181,6 +293,64 @@ FRONTEND_FACTORY_PATH = os.path.join(FRONTEND_DIR, "factory.html")
 QUEUE_DISPATCH_LOCK = threading.Lock()
 PIPELINE_START_STATUS = "分离中"
 TRAIN_START_STATUS = "切片中"
+APP_LOADED_AT_UNIX = time.time()
+
+
+def _source_signature() -> dict:
+    path = os.path.abspath(__file__)
+    try:
+        stat = os.stat(path)
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return {
+            "path": path,
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+            "sha256_12": digest.hexdigest()[:12],
+        }
+    except OSError as exc:
+        return {"path": path, "error": str(exc)}
+
+
+LOADED_SOURCE_SIGNATURE = _source_signature()
+
+
+def _route_signature() -> dict:
+    entries: list[str] = []
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        methods = sorted(getattr(route, "methods", []) or [])
+        if not path or (not path.startswith("/api") and path not in {"/", "/studio", "/factory"}):
+            continue
+        entries.append(f"{','.join(methods)} {path}")
+    entries.sort()
+    digest = hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()[:12]
+    return {
+        "route_count": len(entries),
+        "signature": digest,
+        "sample": entries[:12],
+    }
+
+
+def _runtime_source_contract() -> dict:
+    current = _source_signature()
+    needs_restart = bool(
+        current.get("sha256_12")
+        and LOADED_SOURCE_SIGNATURE.get("sha256_12")
+        and current.get("sha256_12") != LOADED_SOURCE_SIGNATURE.get("sha256_12")
+    )
+    return {
+        "loaded_at_unix": APP_LOADED_AT_UNIX,
+        "loaded_source": LOADED_SOURCE_SIGNATURE,
+        "current_source": current,
+        "route_signature": _route_signature(),
+        "needs_restart": needs_restart,
+        "restart_hint": "restart backend process on port 8000 to load current backend/main.py"
+        if needs_restart
+        else "",
+    }
 
 app = FastAPI(
     title="FeiShark Studio API",
@@ -324,6 +494,14 @@ class TaskStatusResponse(BaseModel):
     error_log: str
     created_at: str
     output_files: list
+    can_open_studio: bool = False
+    final_artifact_download_url: str = ""
+    studio_url: str = ""
+    voice_model_origin_kind: str = ""
+    voice_model_source_job_id: str = ""
+    voice_model_source_summary: str = ""
+    voice_model_source_strategy_key: str = ""
+    voice_model_source_material_profile: str = ""
 
 
 class VoiceAssetResponse(BaseModel):
@@ -345,6 +523,7 @@ class VoiceAssetResponse(BaseModel):
     source_file_count: int | None = None
     source_duration_label: str = ""
     source_summary: str = ""
+    filter_reason: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -368,6 +547,8 @@ class TrainResponse(BaseModel):
     reason: str = ""
     next_step: str = ""
     material_decision: dict | None = None
+    training_config: dict | None = None
+    training_config_summary: str = ""
     status: str
     message: str
 
@@ -388,11 +569,29 @@ class JobResponse(BaseModel):
     factory_url: str = ""
     input_path: str
     output_root: str
+    error_log: str = ""
+    error_summary: dict | None = None
+    checkpoint_inspection: dict | None = None
+    training_config: dict | None = None
+    training_config_summary: str = ""
     generated_model_id: str = ""
     generated_model_name: str = ""
     generated_model_usable: bool | None = None
     generated_model_origin_kind: str = ""
     generated_model_summary: str = ""
+    can_open_studio: bool = False
+    final_artifact_id: str = ""
+    final_artifact_download_url: str = ""
+    has_reviewable_final_artifact: bool = False
+    final_artifact_review_summary: dict | None = None
+    final_artifact_review_verdict: str = "unreviewed"
+    final_artifact_review_route: str = "needs_human_review"
+    final_artifact_quality_summary: dict | None = None
+    final_artifact_quality_verdict: str = ""
+    final_artifact_quality_flags: list[str] = []
+    studio_url: str = ""
+    studio_track_id: str = ""
+    studio_artifact_id: str = ""
     voice_model_origin_kind: str = ""
     voice_model_source_job_id: str = ""
     voice_model_source_summary: str = ""
@@ -435,6 +634,9 @@ class PreflightResponse(BaseModel):
     reason: str = ""
     next_step: str = ""
     material_decision: dict | None = None
+    gpu_status: dict | None = None
+    gpu_acceleration_available: bool | None = None
+    device_mode: str = ""
     checks: list
     errors: list
 
@@ -498,6 +700,66 @@ class StudioEffectExportRequest(BaseModel):
     render_engine: str = "copy_only"
 
 
+class ArtifactListeningReviewRequest(BaseModel):
+    verdict: str = "unreviewed"
+    overall_score: int | None = None
+    vocal_score: int | None = None
+    noise_score: int | None = None
+    mix_score: int | None = None
+    notes: str = ""
+
+
+class ArtifactLifecyclePatchRequest(BaseModel):
+    lifecycle_state: str
+
+
+class TrainingRecoveryRegisterRequest(BaseModel):
+    exp_name: str
+    model_name: str
+    build_index_if_missing: bool = True
+    dry_run: bool = False
+
+
+class ModelImportRvcRequest(BaseModel):
+    pth_path: str
+    index_path: str = ""
+    model_name: str = ""
+    default_pitch: int = 0
+
+
+class TrainingEstimateRequest(BaseModel):
+    preset_key: str = "balanced"
+    duration_seconds: float = 0.0
+    file_count: int = 1
+    gpu_label: str = ""
+
+
+class MemoryCreateRequest(BaseModel):
+    category: str = "note"
+    title: str
+    summary: str = ""
+    source_type: str = "manual"
+    source_path: str = ""
+    source_stage: str = ""
+    tags: list[str] = []
+    importance: int = 50
+    pinned: bool = False
+    metadata: dict = {}
+
+
+class MemoryPatchRequest(BaseModel):
+    category: str | None = None
+    title: str | None = None
+    summary: str | None = None
+    source_type: str | None = None
+    source_path: str | None = None
+    source_stage: str | None = None
+    tags: list[str] | None = None
+    importance: int | None = None
+    pinned: bool | None = None
+    metadata: dict | None = None
+
+
 def _parse_json_object(raw) -> dict:
     if isinstance(raw, dict):
         return raw
@@ -508,6 +770,118 @@ def _parse_json_object(raw) -> dict:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _build_studio_entry_contract(job: dict, track_id: str = "") -> dict:
+    job_id = job.get("job_id") or job.get("task_id") or ""
+    job_type = job.get("job_type") or ""
+    status = job.get("status") or ""
+    resolved_track_id = track_id or job.get("track_id") or ""
+    empty = {
+        "can_open_studio": False,
+        "final_artifact_id": "",
+        "final_artifact_download_url": "",
+        "studio_url": "",
+        "studio_track_id": resolved_track_id,
+        "studio_artifact_id": "",
+    }
+    if job_type != "cover" or normalize_job_status(status) != "completed":
+        return empty
+
+    artifact = get_final_job_artifact(job_id)
+    artifact_path = (artifact or {}).get("file_path") or ""
+    artifact_id = (artifact or {}).get("artifact_id") or ""
+    artifact_type = (artifact or {}).get("artifact_type") or ""
+    if not (
+        artifact
+        and artifact_id
+        and artifact_type == "cover_master"
+        and artifact_path
+        and os.path.exists(artifact_path)
+        and os.path.getsize(artifact_path) > 0
+    ):
+        return empty
+
+    studio_params: dict[str, str] = {}
+    if resolved_track_id:
+        studio_params["track_id"] = resolved_track_id
+    studio_params["job_id"] = job_id
+    studio_params["artifact_id"] = artifact_id
+    return {
+        "can_open_studio": True,
+        "final_artifact_id": artifact_id,
+        "final_artifact_download_url": f"/api/jobs/{job_id}/artifacts/{artifact_id}/download",
+        "studio_url": f"/studio?{urlencode(studio_params)}",
+        "studio_track_id": resolved_track_id,
+        "studio_artifact_id": artifact_id,
+    }
+
+
+def _safe_project_rel_path(path: str) -> str:
+    try:
+        return os.path.relpath(path, PROJECT_ROOT).replace("\\", "/")
+    except ValueError:
+        return path
+
+
+def _download_file_response(path: str, *, not_found_detail: str) -> FileResponse:
+    resolved = resolve_project_file_path(path, PROJECT_ROOT)
+    if not resolved or not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail=not_found_detail)
+    filename = os.path.basename(resolved)
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return FileResponse(path=resolved, filename=filename, media_type=media_type)
+
+
+def _normalize_review_score(value: int | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="review_score_must_be_1_to_5") from exc
+    if number < 1 or number > 5:
+        raise HTTPException(status_code=422, detail="review_score_must_be_1_to_5")
+    return number
+
+
+def _normalize_review_verdict(value: str) -> str:
+    verdict = (value or "unreviewed").strip()
+    if verdict not in LISTENING_REVIEW_VERDICTS:
+        raise HTTPException(status_code=422, detail="review_verdict_invalid")
+    return verdict
+
+
+def _normalize_artifact_quality(value: str) -> str:
+    quality = (value or "").strip()
+    if quality not in ARTIFACT_QUALITY_VERDICTS:
+        raise HTTPException(status_code=422, detail="artifact_quality_invalid")
+    return quality
+
+
+def _build_training_config_from_form(
+    training_config: str = "",
+    *,
+    preset_key: str = "",
+    epochs: str = "",
+    batch_size: str = "",
+    sample_rate: str = "",
+    f0_enabled: str = "",
+    index_enabled: str = "",
+) -> dict:
+    raw_config = _parse_json_form_field(training_config, {}) if training_config else {}
+    overrides = {
+        "preset_key": preset_key,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "sample_rate": sample_rate,
+        "f0_enabled": f0_enabled,
+        "index_enabled": index_enabled,
+    }
+    try:
+        return normalize_training_config(raw_config, overrides=overrides)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": str(exc), "code": "invalid_training_config"}) from exc
 
 
 def _build_cover_model_snapshot(model_id: str) -> dict:
@@ -541,19 +915,47 @@ def _build_cover_model_snapshot(model_id: str) -> dict:
         "磁盘扫描异常时自动降级，返回数据库中的原始记录（不崩服务进程）。"
     ),
 )
-async def get_models(include_unavailable: bool = False, include_smoke: bool = False):
+async def get_models(include_unavailable: bool = False, include_smoke: bool = False, include_test_data: bool = False):
     try:
+        include_filtered = bool(include_smoke or include_test_data)
         result = list_models(
             PROJECT_ROOT,
             WEIGHTS_DIR,
             include_unavailable=include_unavailable,
-            include_smoke=include_smoke,
+            include_smoke=include_filtered,
+            include_test_data=include_filtered,
         )
         print(f"[Models] 返回 {len(result)} 个音色 include_unavailable={include_unavailable}")
         return result
     except Exception as e:
         print(f"[Models] ⚠️  音色加载异常，降级返回空列表: {e}")
         return []
+
+
+@app.get("/api/models/summary", summary="Voice Model summary")
+async def get_models_summary(include_unavailable: bool = False, include_smoke: bool = False, include_test_data: bool = False):
+    include_filtered = bool(include_smoke or include_test_data)
+    items = list_models(
+        PROJECT_ROOT,
+        WEIGHTS_DIR,
+        include_unavailable=include_unavailable,
+        include_smoke=include_filtered,
+        include_test_data=include_filtered,
+    )
+    hidden_count = hidden_test_model_count(
+        PROJECT_ROOT,
+        WEIGHTS_DIR,
+        include_unavailable=include_unavailable,
+    )
+    return {
+        "items_count": len(items),
+        "model_count": len(items),
+        "usable_count": sum(1 for item in items if item.get("usable")),
+        "include_unavailable": include_unavailable,
+        "include_test_data": include_filtered,
+        "hidden_test_count": hidden_count,
+        "hidden_test_model_count": hidden_count,
+    }
 
 
 # ══════════════════════════════════════════════════════
@@ -779,7 +1181,7 @@ async def get_task_status(task_id: str):
 
     if job_row:
         for art in list_job_artifacts(task_id):
-            rel_path = os.path.relpath(art["file_path"], PROJECT_ROOT).replace("\\", "/")
+            rel_path = _safe_project_rel_path(art["file_path"])
             if rel_path in seen:
                 continue
             seen.add(rel_path)
@@ -809,6 +1211,8 @@ async def get_task_status(task_id: str):
     if job_row:
         stage_logs = list_stage_logs(task_id)
         current_stage = canonical_current_stage(job_row, stage_logs)
+        metadata = _parse_json_object(job_row.get("metadata_json"))
+        studio_entry = _build_studio_entry_contract(job_row, job_row.get("track_id") or "")
         return TaskStatusResponse(
             task_id=job_row["job_id"],
             status=job_row["status"],
@@ -816,6 +1220,14 @@ async def get_task_status(task_id: str):
             error_log=job_row.get("error_log") or "",
             created_at=str(job_row.get("created_at") or ""),
             output_files=output_files,
+            can_open_studio=studio_entry["can_open_studio"],
+            final_artifact_download_url=studio_entry["final_artifact_download_url"],
+            studio_url=studio_entry["studio_url"],
+            voice_model_origin_kind=str(metadata.get("voice_model_origin_kind") or ""),
+            voice_model_source_job_id=str(metadata.get("voice_model_source_job_id") or ""),
+            voice_model_source_summary=str(metadata.get("voice_model_source_summary") or ""),
+            voice_model_source_strategy_key=str(metadata.get("voice_model_source_strategy_key") or ""),
+            voice_model_source_material_profile=str(metadata.get("voice_model_source_material_profile") or ""),
         )
 
     return TaskStatusResponse(
@@ -840,16 +1252,22 @@ async def get_task_status(task_id: str):
 )
 async def download_result(task_id: str):
     artifact = get_final_job_artifact(task_id)
-    if artifact and os.path.exists(artifact["file_path"]):
-        filename = os.path.basename(artifact["file_path"])
-        media_type = "audio/wav" if filename.lower().endswith(".wav") else "application/octet-stream"
-        return FileResponse(path=artifact["file_path"], filename=filename, media_type=media_type)
+    if artifact:
+        if not artifact_allows_download(artifact):
+            raise HTTPException(status_code=410, detail="artifact_lifecycle_not_downloadable")
+        resolved = resolve_project_file_path(artifact.get("file_path") or "", PROJECT_ROOT)
+        if resolved and os.path.isfile(resolved):
+            filename = os.path.basename(resolved)
+            media_type = "audio/wav" if filename.lower().endswith(".wav") else "application/octet-stream"
+            return FileResponse(path=resolved, filename=filename, media_type=media_type)
+        raise HTTPException(status_code=404, detail="最终成品尚未生成")
 
     legacy_final = os.path.join(OUTPUT_ROOT, task_id, "final_master.wav")
-    if os.path.exists(legacy_final):
+    resolved_legacy = resolve_project_file_path(legacy_final, PROJECT_ROOT)
+    if resolved_legacy and os.path.isfile(resolved_legacy):
         return FileResponse(
-            path=legacy_final,
-            filename=os.path.basename(legacy_final),
+            path=resolved_legacy,
+            filename=os.path.basename(resolved_legacy),
             media_type="audio/wav",
         )
     raise HTTPException(status_code=404, detail="最终成品尚未生成")
@@ -864,7 +1282,9 @@ async def get_jobs(
     limit: int = 50,
     offset: int = 0,
     include_smoke: bool = False,
+    include_test_data: bool = False,
 ):
+    include_filtered = bool(include_smoke or include_test_data)
     jobs = list_jobs(
         job_type=job_type,
         status=status,
@@ -872,11 +1292,24 @@ async def get_jobs(
         voice_name=voice_name,
         limit=limit,
         offset=offset,
-        include_smoke=include_smoke,
+        include_smoke=include_filtered,
+        include_test_data=include_filtered,
     )
     for job in jobs:
         job["current_stage"] = canonical_current_stage(job, None)
-    return {"items": jobs, "limit": limit, "offset": offset}
+        job.update(get_final_cover_artifact_review_contract(job.get("job_id") or ""))
+    return {
+        "items": jobs,
+        "limit": limit,
+        "offset": offset,
+        "include_test_data": include_filtered,
+        "hidden_test_count": hidden_test_job_count(
+            job_type=job_type,
+            status=status,
+            strategy_key=strategy_key,
+            voice_name=voice_name,
+        ),
+    }
 
 
 @app.get("/api/datasets", summary="查询 Dataset 列表")
@@ -898,8 +1331,18 @@ async def get_datasets(
 
 
 @app.get("/api/jobs/summary", summary="查询 Job 汇总")
-async def get_jobs_summary(include_smoke: bool = False):
-    return job_summary(include_smoke=include_smoke)
+async def get_jobs_summary(include_smoke: bool = False, include_test_data: bool = False):
+    include_filtered = bool(include_smoke or include_test_data)
+    return job_summary(include_smoke=include_filtered, include_test_data=include_filtered)
+
+
+@app.get("/api/reviews/artifacts", summary="list final cover artifacts for listening review")
+async def get_review_artifacts(verdict: str | None = None, quality: str | None = None, limit: int = 50):
+    normalized_verdict = _normalize_review_verdict(verdict) if verdict is not None else None
+    normalized_quality = _normalize_artifact_quality(quality) if quality is not None else None
+    if limit < 1:
+        raise HTTPException(status_code=422, detail="review_artifact_limit_must_be_positive")
+    return list_final_cover_review_artifacts(verdict=normalized_verdict, quality=normalized_quality, limit=limit)
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobResponse, summary="查询 Job 详情")
@@ -919,6 +1362,38 @@ async def get_job_detail(job_id: str):
             params.insert(0, f"batch_id={batch_id}")
         factory_url = f"/factory?{'&'.join(params)}"
     generated_model = get_voice_model_by_source_job(job["job_id"], PROJECT_ROOT, WEIGHTS_DIR) if job.get("job_type") == "train" else None
+    exp_name = extract_exp_name_from_job(job, stage_logs) if job.get("job_type") == "train" else ""
+    checkpoint = inspect_training_checkpoint(exp_name) if exp_name and job.get("job_type") == "train" else None
+    error_summary = summarize_training_error(job.get("error_log") or "", exp_name=exp_name, checkpoint=checkpoint)
+    studio_entry = _build_studio_entry_contract(job, track_id)
+    review_contract = get_final_cover_artifact_review_contract(job["job_id"])
+    training_config = metadata.get("training_config") if job.get("job_type") == "train" else None
+    voice_model_snapshot = _build_cover_model_snapshot(job.get("voice_model_id") or "") if job.get("voice_model_id") else {}
+    voice_model_origin_kind = str(
+        metadata.get("voice_model_origin_kind")
+        or voice_model_snapshot.get("voice_model_origin_kind")
+        or ""
+    )
+    voice_model_source_job_id = str(
+        metadata.get("voice_model_source_job_id")
+        or voice_model_snapshot.get("voice_model_source_job_id")
+        or ""
+    )
+    voice_model_source_summary = str(
+        metadata.get("voice_model_source_summary")
+        or voice_model_snapshot.get("voice_model_source_summary")
+        or ""
+    )
+    voice_model_source_strategy_key = str(
+        metadata.get("voice_model_source_strategy_key")
+        or voice_model_snapshot.get("voice_model_source_strategy_key")
+        or ""
+    )
+    voice_model_source_material_profile = str(
+        metadata.get("voice_model_source_material_profile")
+        or voice_model_snapshot.get("voice_model_source_material_profile")
+        or ""
+    )
     return JobResponse(
         job_id=job["job_id"],
         job_type=job["job_type"],
@@ -935,16 +1410,34 @@ async def get_job_detail(job_id: str):
         factory_url=factory_url,
         input_path=job.get("input_path") or "",
         output_root=job.get("output_root") or "",
+        error_log=job.get("error_log") or "",
+        error_summary=error_summary,
+        checkpoint_inspection=checkpoint,
+        training_config=training_config,
+        training_config_summary=training_config_summary(training_config) if training_config else "",
         generated_model_id=(generated_model.get("model_id") or "") if generated_model else "",
         generated_model_name=(generated_model.get("model_name") or "") if generated_model else "",
         generated_model_usable=generated_model.get("usable") if generated_model else None,
         generated_model_origin_kind=(generated_model.get("origin_kind") or "") if generated_model else "",
         generated_model_summary=(generated_model.get("source_summary") or "") if generated_model else "",
-        voice_model_origin_kind=str(metadata.get("voice_model_origin_kind") or ""),
-        voice_model_source_job_id=str(metadata.get("voice_model_source_job_id") or ""),
-        voice_model_source_summary=str(metadata.get("voice_model_source_summary") or ""),
-        voice_model_source_strategy_key=str(metadata.get("voice_model_source_strategy_key") or ""),
-        voice_model_source_material_profile=str(metadata.get("voice_model_source_material_profile") or ""),
+        can_open_studio=studio_entry["can_open_studio"],
+        final_artifact_id=studio_entry["final_artifact_id"],
+        final_artifact_download_url=studio_entry["final_artifact_download_url"],
+        has_reviewable_final_artifact=review_contract["has_reviewable_final_artifact"],
+        final_artifact_review_summary=review_contract["final_artifact_review_summary"],
+        final_artifact_review_verdict=review_contract["final_artifact_review_verdict"],
+        final_artifact_review_route=review_contract["final_artifact_review_route"],
+        final_artifact_quality_summary=review_contract["final_artifact_quality_summary"],
+        final_artifact_quality_verdict=review_contract["final_artifact_quality_verdict"],
+        final_artifact_quality_flags=review_contract["final_artifact_quality_flags"],
+        studio_url=studio_entry["studio_url"],
+        studio_track_id=studio_entry["studio_track_id"],
+        studio_artifact_id=studio_entry["studio_artifact_id"],
+        voice_model_origin_kind=voice_model_origin_kind,
+        voice_model_source_job_id=voice_model_source_job_id,
+        voice_model_source_summary=voice_model_source_summary,
+        voice_model_source_strategy_key=voice_model_source_strategy_key,
+        voice_model_source_material_profile=voice_model_source_material_profile,
         created_at=str(job.get("created_at") or ""),
         updated_at=str(job.get("updated_at") or ""),
     )
@@ -955,9 +1448,11 @@ async def get_job_artifacts(job_id: str):
     job = get_job_row(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job 不存在: {job_id}")
-    artifacts = list_job_artifacts(job_id)
-    for artifact in artifacts:
-        artifact["download_url"] = f"/api/jobs/{job_id}/artifacts/{artifact['artifact_id']}/download"
+    artifacts = []
+    for artifact in list_job_artifacts(job_id):
+        item = add_listening_review_summary(artifact)
+        item["download_url"] = f"/api/jobs/{job_id}/artifacts/{item['artifact_id']}/download"
+        artifacts.append(item)
     return {"job_id": job_id, "artifacts": artifacts}
 
 
@@ -969,14 +1464,87 @@ async def get_job_stage_logs_route(job_id: str):
     return {"job_id": job_id, "stage_logs": list_stage_logs(job_id)}
 
 
+@app.get("/api/jobs/{job_id}/training-recovery", summary="查询训练 checkpoint 恢复候选")
+async def get_job_training_recovery(job_id: str):
+    try:
+        return get_training_recovery_plan(job_id)
+    except TrainingRecoveryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+
+@app.post("/api/jobs/{job_id}/training-recovery/register", summary="从 checkpoint 恢复登记训练模型")
+async def post_job_training_recovery_register(job_id: str, payload: TrainingRecoveryRegisterRequest):
+    try:
+        return register_training_recovery(
+            job_id,
+            exp_name=payload.exp_name,
+            model_name=payload.model_name,
+            build_index_if_missing=payload.build_index_if_missing,
+            dry_run=payload.dry_run,
+        )
+    except TrainingRecoveryError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
+
+
 @app.get("/api/jobs/{job_id}/artifacts/{artifact_id}/download", summary="download job artifact")
 async def download_job_artifact(job_id: str, artifact_id: str):
     artifact = get_job_artifact(job_id, artifact_id)
-    if not artifact or not os.path.exists(artifact["file_path"]):
+    if not artifact:
         raise HTTPException(status_code=404, detail="artifact_not_found")
-    filename = os.path.basename(artifact["file_path"])
-    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    return FileResponse(path=artifact["file_path"], filename=filename, media_type=media_type)
+    if not artifact_allows_download(artifact):
+        raise HTTPException(status_code=410, detail="artifact_lifecycle_not_downloadable")
+    return _download_file_response(artifact.get("file_path") or "", not_found_detail="artifact_not_found")
+
+
+@app.get("/api/jobs/{job_id}/source-audio/download", summary="download original job source audio")
+async def download_job_source_audio(job_id: str):
+    job = get_job_row(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job_not_found")
+    return _download_file_response(job.get("input_path") or "", not_found_detail="source_audio_not_found")
+
+
+@app.get("/api/jobs/{job_id}/artifacts/{artifact_id}/review", summary="get artifact listening review")
+async def get_artifact_listening_review(job_id: str, artifact_id: str):
+    payload = get_job_artifact_review(job_id, artifact_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="artifact_not_found")
+    return payload
+
+
+@app.patch("/api/jobs/{job_id}/artifacts/{artifact_id}/lifecycle", summary="update artifact lifecycle_state")
+async def patch_artifact_lifecycle(job_id: str, artifact_id: str, payload: ArtifactLifecyclePatchRequest):
+    try:
+        updated = update_job_artifact_lifecycle_state(job_id, artifact_id, payload.lifecycle_state)
+    except ValueError as exc:
+        code = str(exc)
+        if code == "lifecycle_state_invalid":
+            raise HTTPException(status_code=422, detail=code) from exc
+        if code == "lifecycle_transition_not_allowed":
+            raise HTTPException(status_code=409, detail=code) from exc
+        raise HTTPException(status_code=422, detail=code) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="artifact_not_found")
+    item = add_listening_review_summary(updated)
+    item["download_url"] = f"/api/jobs/{job_id}/artifacts/{artifact_id}/download"
+    return item
+
+
+@app.patch("/api/jobs/{job_id}/artifacts/{artifact_id}/review", summary="save artifact listening review")
+async def patch_artifact_listening_review(job_id: str, artifact_id: str, payload: ArtifactListeningReviewRequest):
+    review = update_job_artifact_review(
+        job_id,
+        artifact_id,
+        verdict=_normalize_review_verdict(payload.verdict),
+        overall_score=_normalize_review_score(payload.overall_score),
+        vocal_score=_normalize_review_score(payload.vocal_score),
+        noise_score=_normalize_review_score(payload.noise_score),
+        mix_score=_normalize_review_score(payload.mix_score),
+        notes=(payload.notes or "").strip(),
+    )
+    if not review:
+        raise HTTPException(status_code=404, detail="artifact_not_found")
+    return review
 
 
 async def _get_job_stage_logs_impl(job_id: str):
@@ -1003,6 +1571,50 @@ async def post_model_import(payload: ModelImportRequest):
     return model
 
 
+@app.post("/api/models/import-rvc", summary="安全登记第三方 RVC 模型")
+async def post_model_import_rvc(payload: ModelImportRvcRequest):
+    pth_path = payload.pth_path.strip()
+    index_path = payload.index_path.strip()
+    model_name = payload.model_name.strip() or os.path.splitext(os.path.basename(pth_path))[0]
+    if not pth_path:
+        raise HTTPException(status_code=400, detail="pth_path 不能为空")
+    if not pth_path.lower().endswith(".pth"):
+        raise HTTPException(status_code=400, detail="pth_path 必须指向 .pth 文件")
+    if not os.path.exists(pth_path) or not os.path.isfile(pth_path):
+        raise HTTPException(status_code=422, detail="pth_path 不存在")
+    if index_path:
+        if not index_path.lower().endswith(".index"):
+            raise HTTPException(status_code=400, detail="index_path 必须指向 .index 文件")
+        if not os.path.exists(index_path) or not os.path.isfile(index_path):
+            raise HTTPException(status_code=422, detail="index_path 不存在")
+
+    existing_models = list_models(PROJECT_ROOT, WEIGHTS_DIR, include_unavailable=True, include_smoke=True)
+    pth_abs = os.path.abspath(pth_path)
+    for item in existing_models:
+        existing_name = str(item.get("model_name") or "").strip()
+        existing_pth = str(item.get("resolved_pth_path") or "").strip()
+        if existing_name.lower() == model_name.lower():
+            raise HTTPException(status_code=409, detail=f"模型名已存在: {model_name}")
+        if existing_pth and os.path.abspath(existing_pth) == pth_abs:
+            raise HTTPException(status_code=409, detail=f"模型路径已登记: {pth_path}")
+
+    model = import_voice_model(
+        model_name=model_name,
+        pth_path=pth_path,
+        index_path=index_path,
+        default_pitch=payload.default_pitch,
+        project_root=PROJECT_ROOT,
+        weights_dir=WEIGHTS_DIR,
+        origin_kind="imported_external",
+    )
+    return {
+        "ok": True,
+        "read_only_rvc": True,
+        "model": model,
+        "message": "已登记到 FeiShark 模型库；未复制、删除、移动或覆盖 RVC 文件。",
+    }
+
+
 @app.post("/api/models/rescan", summary="重新扫描模型")
 async def post_models_rescan():
     return rescan_voice_models(PROJECT_ROOT, WEIGHTS_DIR)
@@ -1014,6 +1626,159 @@ async def get_model_detail(model_id: str):
     if not model:
         raise HTTPException(status_code=404, detail=f"模型不存在: {model_id}")
     return model
+
+
+@app.get("/api/engines", summary="Local AI Engine Manager 摘要")
+async def get_engines():
+    return {
+        "read_only": True,
+        "engines": list_engines(PROJECT_ROOT, WEIGHTS_DIR),
+    }
+
+
+@app.post("/api/engines/scan", summary="只读扫描本地 AI 引擎")
+async def post_engines_scan(force: bool = False):
+    return scan_engines(PROJECT_ROOT, WEIGHTS_DIR, force=force)
+
+
+@app.get("/api/engines/rvc/models", summary="读取第三方 RVC 可见模型")
+async def get_engine_rvc_models(
+    limit: int = 50,
+    offset: int = 0,
+    q: str = "",
+    registered: str = "all",
+    has_index: str = "all",
+    force: bool = False,
+):
+    return list_rvc_models(
+        PROJECT_ROOT,
+        WEIGHTS_DIR,
+        limit=limit,
+        offset=offset,
+        q=q,
+        registered=registered,
+        has_index=has_index,
+        force=force,
+    )
+
+
+@app.get("/api/engines/{engine_key}", summary="Local AI Engine Manager 单引擎详情")
+async def get_engine_detail(engine_key: str):
+    engine = get_engine(engine_key, PROJECT_ROOT, WEIGHTS_DIR)
+    if not engine:
+        raise HTTPException(status_code=404, detail=f"未知引擎: {engine_key}")
+    return engine
+
+
+@app.get("/api/material-library/summary", summary="授权素材库摘要")
+async def get_material_library_summary():
+    return material_library_summary(PROJECT_ROOT)
+
+
+@app.get("/api/material-library/items", summary="授权素材库条目")
+async def get_material_library_items(
+    role: str = "",
+    profile: str = "",
+    retention: str = "active",
+    limit: int = 100,
+):
+    return material_library_items(
+        PROJECT_ROOT,
+        role=role,
+        profile=profile,
+        retention=retention,
+        limit=limit,
+    )
+
+
+@app.post("/api/material-library/scan", summary="只读重扫授权素材库")
+async def post_material_library_scan():
+    return scan_material_library(PROJECT_ROOT)
+
+
+@app.get("/api/material-library/hygiene", summary="非破坏性数据卫生报告")
+async def get_material_library_hygiene():
+    return material_hygiene_summary()
+
+
+@app.get("/api/separation/eval/sources", summary="UVR separation eval candidate sources")
+async def get_separation_eval_sources():
+    return discover_separation_eval_sources(PROJECT_ROOT)
+
+
+@app.get("/api/separation/eval/runs", summary="UVR separation eval run list")
+async def get_separation_eval_runs():
+    return list_separation_eval_runs(PROJECT_ROOT)
+
+
+@app.get("/api/separation/eval/runs/{run_id}", summary="UVR separation eval run detail")
+async def get_separation_eval_run_detail(run_id: str):
+    payload = get_separation_eval_run(run_id, PROJECT_ROOT)
+    if not payload:
+        raise HTTPException(status_code=404, detail=f"separation eval run not found: {run_id}")
+    return payload
+
+
+@app.get("/api/separation/eval/runs/{run_id}/items/{item_index}/artifacts/{artifact_key}", summary="UVR separation eval artifact")
+async def get_separation_eval_artifact(run_id: str, item_index: int, artifact_key: str):
+    artifact_path = resolve_separation_eval_artifact(run_id, item_index, artifact_key, PROJECT_ROOT)
+    if not artifact_path:
+        raise HTTPException(status_code=404, detail="separation eval artifact not found")
+    return FileResponse(
+        str(artifact_path),
+        media_type="audio/wav",
+        filename=artifact_path.name,
+    )
+
+
+@app.post("/api/separation/eval/run", summary="UVR separation eval execution is disabled from browser")
+async def post_separation_eval_run_disabled():
+    raise HTTPException(
+        status_code=501,
+        detail={
+            "ok": False,
+            "code": "separation_eval_execute_disabled",
+            "message": "Separation eval execution is CLI-only for safety. Use backend\\verify_stage45r_separation_quality_audit.py --execute with explicit caps.",
+            "safe_cli": "python backend\\verify_stage45r_separation_quality_audit.py --execute --limit 3 --clip-seconds 45",
+        },
+    )
+
+
+@app.get("/api/training/presets", summary="training presets")
+async def get_training_presets():
+    return list_training_presets()
+
+
+@app.post("/api/training/estimate", summary="训练调教风险估算")
+async def post_training_estimate(payload: TrainingEstimateRequest):
+    return estimate_training(
+        preset_key=payload.preset_key,
+        duration_seconds=payload.duration_seconds,
+        file_count=payload.file_count,
+        gpu_label=payload.gpu_label,
+    )
+
+
+@app.get("/api/training/gpu-status", summary="RVC training GPU acceleration probe")
+async def get_training_gpu_status_route():
+    return get_training_gpu_status(
+        rvc_python=RVC_PYTHON,
+        rvc_webui_dir=RVC_WEBUI_DIR,
+        train_gpus=TRAIN_GPUS,
+    )
+
+
+@app.get("/api/training/observer/latest", summary="Latest training observer")
+async def get_latest_training_observer(include_smoke: bool = False):
+    return latest_training_observer(PROJECT_ROOT, WEIGHTS_DIR, include_smoke=include_smoke)
+
+
+@app.get("/api/jobs/{job_id}/training-observer", summary="Training observer by job")
+async def get_job_training_observer(job_id: str):
+    result = training_observer(job_id, PROJECT_ROOT, WEIGHTS_DIR)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404 if result.get("code") == "job_not_found" else 422, detail=result)
+    return result
 
 
 @app.get("/api/preflight/train", response_model=PreflightResponse, summary="训练预检")
@@ -1087,12 +1852,76 @@ async def get_diagnostics_summary(model_id: str = "v_001"):
 
     return {
         "rvc": get_engine_summary(),
+        "api_runtime": _runtime_source_contract(),
         "train_preflight": train_preflight,
         "cover_preflight": cover_preflight,
         "usable_model_count": sum(1 for model in models if model["usable"]),
         "missing_dependencies": missing,
         "last_failed_jobs": failed_jobs,
     }
+
+
+@app.get("/api/memory", summary="Memory Lab local memories")
+async def get_memory_route(
+    category: str = "",
+    tag: str = "",
+    q: str = "",
+    pinned: bool | None = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    return {
+        "items": list_memories(
+            category=category.strip(),
+            tag=tag.strip(),
+            q=q.strip(),
+            pinned=pinned,
+            limit=limit,
+            offset=offset,
+        ),
+        "limit": max(1, min(int(limit or 50), 200)),
+        "offset": max(0, int(offset or 0)),
+    }
+
+
+@app.get("/api/memory/summary", summary="Memory Lab summary")
+async def get_memory_summary_route():
+    return memory_summary()
+
+
+@app.post("/api/memory/rescan", summary="rescan local agent-md reports into Memory Lab")
+async def post_memory_rescan_route():
+    return rescan_agent_reports()
+
+
+@app.post("/api/memory", summary="create or upsert a local memory")
+async def post_memory_route(payload: MemoryCreateRequest):
+    try:
+        return upsert_memory(
+            category=payload.category,
+            title=payload.title,
+            summary=payload.summary,
+            source_type=payload.source_type,
+            source_path=payload.source_path,
+            source_stage=payload.source_stage,
+            tags=payload.tags,
+            importance=payload.importance,
+            pinned=payload.pinned,
+            metadata=payload.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/api/memory/{memory_id}", summary="update a local memory")
+async def patch_memory_route(memory_id: str, payload: MemoryPatchRequest):
+    try:
+        updated = patch_memory(memory_id, payload.model_dump(exclude_none=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="memory_not_found")
+    return updated
 
 
 def _parse_json_form_field(raw: str, fallback):
@@ -1105,23 +1934,27 @@ def _parse_json_form_field(raw: str, fallback):
 
 
 @app.get("/api/factory/summary", summary="Release Factory summary")
-async def get_factory_summary():
+async def get_factory_summary(include_smoke: bool = False, include_test_data: bool = False):
+    include_filtered = bool(include_smoke or include_test_data)
     conn = get_connection()
     try:
-        batch_count = conn.execute("SELECT COUNT(*) FROM release_batches").fetchone()[0]
-        track_count = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
         lyric_doc_count = conn.execute("SELECT COUNT(*) FROM lyric_documents").fetchone()[0]
         timeline_count = conn.execute("SELECT COUNT(*) FROM lyric_timeline_versions").fetchone()[0]
     finally:
         conn.close()
+    visible_batches = list_batches(limit=100000, offset=0, include_test_data=include_filtered)
+    visible_tracks = list_tracks(limit=100000, offset=0, include_test_data=include_filtered)
 
     return {
-        "batch_count": batch_count,
-        "track_count": track_count,
+        "batch_count": len(visible_batches),
+        "track_count": len(visible_tracks),
         "lyric_document_count": lyric_doc_count,
         "timeline_count": timeline_count,
-        "recent_batches": list_batches(limit=5, offset=0),
-        "recent_audit_events": list_audit_events(limit=10, offset=0),
+        "include_test_data": include_filtered,
+        "hidden_test_batch_count": hidden_test_batch_count(),
+        "hidden_test_track_count": hidden_test_track_count(),
+        "recent_batches": visible_batches[:5],
+        "recent_audit_events": list_audit_events(limit=10, offset=0, include_test_data=include_filtered),
     }
 
 
@@ -1138,24 +1971,46 @@ async def post_batch(payload: BatchCreateRequest):
 
 
 @app.get("/api/batches", summary="list release batches")
-async def get_batches(limit: int = 50, offset: int = 0):
-    return {"items": list_batches(limit=limit, offset=offset), "limit": limit, "offset": offset}
+async def get_batches(limit: int = 50, offset: int = 0, include_smoke: bool = False, include_test_data: bool = False):
+    include_filtered = bool(include_smoke or include_test_data)
+    return {
+        "items": list_batches(limit=limit, offset=offset, include_test_data=include_filtered),
+        "limit": limit,
+        "offset": offset,
+        "include_test_data": include_filtered,
+        "hidden_test_count": hidden_test_batch_count(),
+    }
 
 
 @app.get("/api/batches/{batch_id}", summary="release batch detail")
-async def get_batch_detail_route(batch_id: str):
-    batch = get_batch(batch_id)
+async def get_batch_detail_route(batch_id: str, include_test_data: bool = False):
+    batch = get_batch(batch_id, include_test_data=include_test_data)
     if not batch:
         raise HTTPException(status_code=404, detail="batch_not_found")
+    batch["include_test_data"] = include_test_data
     return batch
 
 
 @app.get("/api/batches/{batch_id}/tracks", summary="list tracks in batch")
-async def get_batch_tracks_route(batch_id: str, limit: int = 200, offset: int = 0):
-    batch = get_batch(batch_id)
+async def get_batch_tracks_route(
+    batch_id: str,
+    limit: int = 200,
+    offset: int = 0,
+    include_smoke: bool = False,
+    include_test_data: bool = False,
+):
+    include_filtered = bool(include_smoke or include_test_data)
+    batch = get_batch(batch_id, include_test_data=include_filtered)
     if not batch:
         raise HTTPException(status_code=404, detail="batch_not_found")
-    return {"batch_id": batch_id, "items": list_tracks(batch_id=batch_id, limit=limit, offset=offset), "limit": limit, "offset": offset}
+    return {
+        "batch_id": batch_id,
+        "items": list_tracks(batch_id=batch_id, limit=limit, offset=offset, include_test_data=include_filtered),
+        "limit": limit,
+        "offset": offset,
+        "include_test_data": include_filtered,
+        "hidden_test_count": hidden_test_track_count(batch_id=batch_id),
+    }
 
 
 @app.post("/api/batches/{batch_id}/tracks/import", summary="import tracks into batch")
@@ -1209,7 +2064,7 @@ async def get_track_detail_route(track_id: str):
         **track,
         "current_master": current_master,
         "lyrics": lyrics,
-        "audit_events": list_audit_events(entity_type="track", entity_id=track_id, limit=20, offset=0),
+        "audit_events": list_audit_events(entity_type="track", entity_id=track_id, limit=20, offset=0, include_test_data=True),
     }
 
 
@@ -1485,6 +2340,13 @@ async def train_voice(
     voice_name: str = Form(default=""),
     files: List[UploadFile] = File(...),
     smoke: bool = Form(default=False),
+    training_config: str = Form(default=""),
+    preset_key: str = Form(default=""),
+    epochs: str = Form(default=""),
+    batch_size: str = Form(default=""),
+    sample_rate: str = Form(default=""),
+    f0_enabled: str = Form(default=""),
+    index_enabled: str = Form(default=""),
 ):
     # ── 文件校验 ──
     allowed_ext = {".wav", ".mp3", ".flac"}
@@ -1504,6 +2366,15 @@ async def train_voice(
     # ── 生成 task_id 和专属 dataset 文件夹 ──
     task_id = f"train_{uuid.uuid4().hex[:12]}"
     voice_name = voice_name.strip() or os.path.splitext(validated_files[0][0].filename or "自定义音色")[0]
+    normalized_training_config = _build_training_config_from_form(
+        training_config,
+        preset_key=preset_key,
+        epochs=epochs,
+        batch_size=batch_size,
+        sample_rate=sample_rate,
+        f0_enabled=f0_enabled,
+        index_enabled=index_enabled,
+    )
 
     saved = await save_train_uploads(task_id, [f for f, _ in validated_files])
     try:
@@ -1529,6 +2400,7 @@ async def train_voice(
                 "total_bytes": saved["total_bytes"],
                 "smoke": bool(smoke),
                 "material_decision": material_decision,
+                "training_config": normalized_training_config,
             },
         )
         dataset_id = create_dataset_record(
@@ -1570,6 +2442,7 @@ async def train_voice(
                 "strategy_key": strategy_key,
                 "dataset_id": dataset_id,
                 "material_decision": material_decision,
+                "training_config": normalized_training_config,
             },
         )
         log_stage(task_id, "train_preflight", "completed", "train preflight ok", preflight)
@@ -1607,6 +2480,8 @@ async def train_voice(
             reason=material_decision.get("reason") or "",
             next_step=material_decision.get("next_step") or "",
             material_decision=material_decision,
+            training_config=normalized_training_config,
+            training_config_summary=training_config_summary(normalized_training_config),
             status="processing" if reserved else "pending",
             message=message,
         )
@@ -1700,6 +2575,20 @@ def _run_training(task_id: str, voice_name: str, dataset_folder: str):
     _run_job(task_id)
 
 
+# ── 资产生命周期契约 ────────────────────────────────────
+
+
+@app.get("/api/lifecycle/contract", summary="资产生命周期状态契约")
+async def get_lifecycle_contract():
+    return {
+        "lifecycle_states": sorted(LIFECYCLE_STATES),
+        "retention_to_lifecycle": dict(RETENTION_TO_LIFECYCLE),
+        "cleanup_deletable_states": ["transient"],
+        "list_hide_layer": "smoke_filter_regex",
+        "authoritative_cleanup_field": "lifecycle_state",
+    }
+
+
 # ── 健康检查 ──────────────────────────────────────────
 
 
@@ -1710,6 +2599,7 @@ async def health():
         "status":  "ok",
         "service": "FeiShark Studio API",
         "version": "2.2.0",
+        "api_runtime": _runtime_source_contract(),
         "features": {
             "chunked_upload": True,
             "cors_enabled":   True,

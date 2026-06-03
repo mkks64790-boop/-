@@ -28,9 +28,11 @@ ACTIVE_COMPUTE_STATUSES = {
     "混音中",
     "切片中",
     "训练中",
+    "处理中",
+    "running",
     "processing",
 }
-TERMINAL_STATUSES = {"完成", "失败", "已取消"}
+TERMINAL_STATUSES = {"完成", "已完成", "completed", "失败", "failed", "已取消", "cancelled"}
 COMPUTE_MUTEX_NAME = "gpu"
 LIFECYCLE_DELETE_FILENAMES = (
     "vocal.wav",
@@ -43,6 +45,21 @@ LIFECYCLE_DELETE_FILENAMES = (
 
 _cleanup_lock = threading.Lock()
 _mutex_lock = threading.Lock()
+
+
+def _normalize_status(status: str) -> str:
+    value = (status or "").strip().lower()
+    if value in {"pending", "queued", "排队中", "等待中"}:
+        return "pending"
+    if value in {"完成", "已完成", "completed", "complete", "done", "success", "succeeded"}:
+        return "completed"
+    if value in {"失败", "failed", "fail", "error"}:
+        return "failed"
+    if value in {"已取消", "cancelled", "canceled"}:
+        return "cancelled"
+    if value in {"训练中", "处理中", "running", "processing", "分离中", "修音中", "变声中", "混音中", "切片中"}:
+        return "processing"
+    return value
 
 
 def get_connection() -> sqlite3.Connection:
@@ -133,6 +150,7 @@ def init_db():
                 file_path      TEXT NOT NULL,
                 file_size      INTEGER NOT NULL DEFAULT 0,
                 duration_sec   REAL NOT NULL DEFAULT 0,
+                lifecycle_state TEXT NOT NULL DEFAULT 'active',
                 metadata_json  TEXT DEFAULT '{}',
                 created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(job_id) REFERENCES jobs(job_id)
@@ -146,6 +164,7 @@ def init_db():
                 file_path      TEXT NOT NULL,
                 file_size      INTEGER NOT NULL DEFAULT 0,
                 is_final       INTEGER NOT NULL DEFAULT 0,
+                lifecycle_state TEXT NOT NULL DEFAULT 'active',
                 metadata_json  TEXT DEFAULT '{}',
                 created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(job_id) REFERENCES jobs(job_id)
@@ -171,6 +190,7 @@ def init_db():
                 index_path     TEXT NOT NULL,
                 default_pitch  INTEGER NOT NULL DEFAULT 0,
                 status         TEXT NOT NULL DEFAULT 'ready',
+                lifecycle_state TEXT NOT NULL DEFAULT 'active',
                 metadata_json  TEXT DEFAULT '{}',
                 created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -250,6 +270,65 @@ def init_db():
                 detail_json  TEXT DEFAULT '{}',
                 created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS project_memories (
+                memory_id     TEXT PRIMARY KEY,
+                category      TEXT NOT NULL DEFAULT 'note',
+                title         TEXT NOT NULL DEFAULT '',
+                summary       TEXT NOT NULL DEFAULT '',
+                source_type   TEXT NOT NULL DEFAULT 'manual',
+                source_path   TEXT NOT NULL DEFAULT '',
+                source_stage  TEXT NOT NULL DEFAULT '',
+                tags_json     TEXT DEFAULT '[]',
+                importance    INTEGER NOT NULL DEFAULT 50,
+                pinned        INTEGER NOT NULL DEFAULT 0,
+                metadata_json TEXT DEFAULT '{}',
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS material_libraries (
+                library_id     TEXT PRIMARY KEY,
+                library_key    TEXT NOT NULL UNIQUE,
+                display_name   TEXT NOT NULL DEFAULT '',
+                source_group   TEXT NOT NULL DEFAULT '',
+                root_path      TEXT NOT NULL DEFAULT '',
+                license_status TEXT NOT NULL DEFAULT 'unknown',
+                license_tag    TEXT NOT NULL DEFAULT '',
+                storage_policy TEXT NOT NULL DEFAULT 'external_read_only',
+                enabled        INTEGER NOT NULL DEFAULT 1,
+                metadata_json  TEXT DEFAULT '{}',
+                last_scanned_at TIMESTAMP DEFAULT NULL,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS material_assets (
+                material_id    TEXT PRIMARY KEY,
+                library_id     TEXT NOT NULL,
+                source_group   TEXT NOT NULL DEFAULT '',
+                file_name      TEXT NOT NULL DEFAULT '',
+                file_ext       TEXT NOT NULL DEFAULT '',
+                file_path      TEXT NOT NULL DEFAULT '',
+                relative_path  TEXT NOT NULL DEFAULT '',
+                file_size      INTEGER NOT NULL DEFAULT 0,
+                duration_sec   REAL DEFAULT NULL,
+                sample_rate    INTEGER DEFAULT NULL,
+                channels       INTEGER DEFAULT NULL,
+                codec          TEXT NOT NULL DEFAULT '',
+                material_role  TEXT NOT NULL DEFAULT 'unknown',
+                material_profile TEXT NOT NULL DEFAULT 'needs_manual_review',
+                quality_state  TEXT NOT NULL DEFAULT 'metadata_only',
+                route_hint     TEXT NOT NULL DEFAULT '',
+                license_tag    TEXT NOT NULL DEFAULT '',
+                license_status TEXT NOT NULL DEFAULT 'unknown',
+                retention_status TEXT NOT NULL DEFAULT 'active',
+                lifecycle_state  TEXT NOT NULL DEFAULT 'active',
+                metadata_json  TEXT DEFAULT '{}',
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(library_id) REFERENCES material_libraries(library_id)
+            );
         """)
 
         # 兼容迁移：旧表缺少 task_type 和 voice_name 时自动添加
@@ -263,6 +342,10 @@ def init_db():
         _migrate_add_column(conn, "jobs", "depends_on_json", "TEXT DEFAULT '[]'")
         _migrate_add_column(conn, "tracks", "current_master_job_id", "TEXT DEFAULT ''")
         _migrate_add_column(conn, "tracks", "current_master_artifact_id", "TEXT DEFAULT ''")
+        _migrate_add_column(conn, "audio_assets", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'")
+        _migrate_add_column(conn, "job_artifacts", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'")
+        _migrate_add_column(conn, "voice_models", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'")
+        _migrate_add_column(conn, "material_assets", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'")
 
         conn.execute(
             "INSERT OR IGNORE INTO compute_mutex (mutex_name, owner_task_id, owner_task_type, owner_status) "
@@ -275,6 +358,7 @@ def init_db():
         _backfill_extended_job_fields(conn)
         _backfill_legacy_voice_models(conn)
         _backfill_job_current_stages(conn)
+        _backfill_asset_lifecycle_states(conn)
         conn.commit()
 
         # 确保权重目录存在
@@ -347,6 +431,24 @@ def _create_unique_indexes(conn):
 
         CREATE INDEX IF NOT EXISTS idx_audit_events_entity_created
         ON audit_events(entity_type, entity_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_project_memories_category_updated
+        ON project_memories(category, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_project_memories_stage_updated
+        ON project_memories(source_stage, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_project_memories_pinned_updated
+        ON project_memories(pinned, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_material_assets_library_profile
+        ON material_assets(library_id, material_profile, retention_status);
+
+        CREATE INDEX IF NOT EXISTS idx_material_assets_role_status
+        ON material_assets(material_role, quality_state, retention_status);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_material_assets_library_path
+        ON material_assets(library_id, file_path);
         """
     )
 
@@ -436,6 +538,25 @@ def _backfill_legacy_voice_models(conn):
     )
 
 
+def _backfill_asset_lifecycle_states(conn):
+    try:
+        from .services.lifecycle_service import backfill_lifecycle_states
+    except ImportError:
+        from services.lifecycle_service import backfill_lifecycle_states
+
+    stats = backfill_lifecycle_states(conn)
+    if any(stats.values()):
+        print(f"[MIGRATE] lifecycle_state backfill: {stats}")
+
+
+def _table_exists(conn, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
 def _backfill_job_current_stages(conn):
     rows = conn.execute(
         """
@@ -478,47 +599,123 @@ def _backfill_job_current_stages(conn):
 # ── CRUD ──────────────────────────────────────────────
 
 
+def _resolve_voice_model_fields(
+    model_id: str,
+    model_name: str,
+    pth_path: str,
+    index_path: str,
+    default_pitch: int,
+    source_job_id: str,
+    metadata: dict | None,
+    existing: sqlite3.Row | None,
+) -> dict:
+    """Resolve voice_models column values (matches INSERT OR REPLACE COALESCE semantics)."""
+    metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
+    if existing is None:
+        return {
+            "voice_model_id": model_id,
+            "legacy_model_id": model_id,
+            "model_name": model_name,
+            "source_job_id": source_job_id or None,
+            "pth_path": pth_path,
+            "index_path": index_path,
+            "default_pitch": default_pitch,
+            "status": "ready",
+            "metadata_json": metadata_json or "{}",
+        }
+    return {
+        "voice_model_id": model_id,
+        "legacy_model_id": model_id,
+        "model_name": model_name,
+        "source_job_id": source_job_id or existing["source_job_id"],
+        "pth_path": pth_path,
+        "index_path": index_path,
+        "default_pitch": default_pitch,
+        "status": "ready",
+        "metadata_json": metadata_json or (existing["metadata_json"] or "{}"),
+    }
+
+
+def _metadata_json_equal(left: str, right: str) -> bool:
+    try:
+        return json.loads(left or "{}") == json.loads(right or "{}")
+    except json.JSONDecodeError:
+        return (left or "") == (right or "")
+
+
+def _voice_model_materially_changed(existing: sqlite3.Row | None, fields: dict) -> bool:
+    if existing is None:
+        return True
+    return (
+        existing["legacy_model_id"] != fields["legacy_model_id"]
+        or existing["model_name"] != fields["model_name"]
+        or (existing["source_job_id"] or None) != fields["source_job_id"]
+        or existing["pth_path"] != fields["pth_path"]
+        or existing["index_path"] != fields["index_path"]
+        or int(existing["default_pitch"]) != int(fields["default_pitch"])
+        or existing["status"] != fields["status"]
+        or not _metadata_json_equal(existing["metadata_json"] or "{}", fields["metadata_json"])
+    )
+
+
 def add_voice_asset(model_id, model_name, pth_path, index_path, default_pitch=0, source_job_id: str = "", metadata: dict | None = None) -> bool:
-    """添加音色资产到知识库"""
+    """添加音色资产到知识库。返回 True 表示新插入 voice_assets 或 voice_models 有实质更新。"""
     conn = get_connection()
     try:
-        conn.execute(
+        existing_model = conn.execute(
+            """
+            SELECT voice_model_id, legacy_model_id, model_name, source_job_id,
+                   pth_path, index_path, default_pitch, status, metadata_json, created_at
+            FROM voice_models
+            WHERE voice_model_id = ?
+            """,
+            (model_id,),
+        ).fetchone()
+        model_fields = _resolve_voice_model_fields(
+            model_id, model_name, pth_path, index_path, default_pitch, source_job_id, metadata, existing_model
+        )
+        model_changed = _voice_model_materially_changed(existing_model, model_fields)
+
+        cur = conn.execute(
             "INSERT OR IGNORE INTO voice_assets (model_id, model_name, pth_path, index_path, default_pitch) "
             "VALUES (?, ?, ?, ?, ?)",
             (model_id, model_name, pth_path, index_path, default_pitch),
         )
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO voice_models (
-                voice_model_id, legacy_model_id, model_name, source_job_id,
-                pth_path, index_path, default_pitch, status, metadata_json,
-                created_at, updated_at
-            ) VALUES (
-                ?, ?, ?, COALESCE(NULLIF(?, ''), (SELECT source_job_id FROM voice_models WHERE voice_model_id = ?), NULL),
-                ?, ?, ?, 'ready', COALESCE(NULLIF(?, ''), (SELECT metadata_json FROM voice_models WHERE voice_model_id = ?), '{}'),
-                COALESCE((SELECT created_at FROM voice_models WHERE voice_model_id = ?), CURRENT_TIMESTAMP),
-                CURRENT_TIMESTAMP
+        assets_inserted = cur.rowcount > 0
+
+        if assets_inserted or model_changed:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO voice_models (
+                    voice_model_id, legacy_model_id, model_name, source_job_id,
+                    pth_path, index_path, default_pitch, status, metadata_json,
+                    created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    COALESCE(?, CURRENT_TIMESTAMP),
+                    CURRENT_TIMESTAMP
+                )
+                """,
+                (
+                    model_fields["voice_model_id"],
+                    model_fields["legacy_model_id"],
+                    model_fields["model_name"],
+                    model_fields["source_job_id"],
+                    model_fields["pth_path"],
+                    model_fields["index_path"],
+                    model_fields["default_pitch"],
+                    model_fields["status"],
+                    model_fields["metadata_json"],
+                    existing_model["created_at"] if existing_model else None,
+                ),
             )
-            """,
-            (
-                model_id,
-                model_id,
-                model_name,
-                source_job_id,
-                model_id,
-                pth_path,
-                index_path,
-                default_pitch,
-                json.dumps(metadata or {}, ensure_ascii=False),
-                model_id,
-                model_id,
-            ),
-        )
+
         conn.commit()
-        ok = True
+        ok = assets_inserted or model_changed
         if ok:
             print(f"[OK] 音色入库: {model_name} ({model_id})")
-        if conn.total_changes == 0:
+        else:
             print(f"[SKIP] 音色已存在: {model_id}")
         return ok
     finally:
@@ -643,7 +840,8 @@ def update_task_status(task_id, status, error_log="") -> bool:
     """主写 jobs 状态，再镜像到 legacy tasks。"""
     conn = get_connection()
     try:
-        if status == "pending":
+        normalized_status = _normalize_status(status)
+        if normalized_status == "pending":
             job_cursor = conn.execute(
                 """
                 UPDATE jobs
@@ -652,7 +850,7 @@ def update_task_status(task_id, status, error_log="") -> bool:
                 """,
                 (status, error_log, task_id, task_id),
             )
-        elif status == "已取消":
+        elif normalized_status == "cancelled":
             job_cursor = conn.execute(
                 """
                 UPDATE jobs
@@ -661,11 +859,34 @@ def update_task_status(task_id, status, error_log="") -> bool:
                 """,
                 (status, error_log, task_id, task_id),
             )
-        elif status in TERMINAL_STATUSES:
+        elif normalized_status == "failed":
             job_cursor = conn.execute(
                 """
                 UPDATE jobs
-                SET status = ?, error_log = ?, updated_at = CURRENT_TIMESTAMP
+                SET status = ?,
+                    current_stage = CASE
+                        WHEN COALESCE(current_stage, '') IN ('', 'pending', 'job_dispatch', 'job_control')
+                        THEN 'failed'
+                        ELSE current_stage
+                    END,
+                    error_log = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE job_id = ? OR legacy_task_id = ?
+                """,
+                (status, error_log, task_id, task_id),
+            )
+        elif normalized_status == "completed":
+            job_cursor = conn.execute(
+                """
+                UPDATE jobs
+                SET status = ?,
+                    current_stage = CASE
+                        WHEN COALESCE(current_stage, '') IN ('', 'pending', 'job_dispatch', 'job_control')
+                        THEN CASE WHEN job_type = 'train' THEN 'train_register_model' ELSE 'cover_mix' END
+                        ELSE current_stage
+                    END,
+                    error_log = ?,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE job_id = ? OR legacy_task_id = ?
                 """,
                 (status, error_log, task_id, task_id),
@@ -687,7 +908,7 @@ def update_task_status(task_id, status, error_log="") -> bool:
         ok = (job_cursor.rowcount > 0) or (task_cursor.rowcount > 0)
         if ok:
             print(f"[OK] 任务状态: {task_id} -> {status}")
-            if status in TERMINAL_STATUSES:
+            if normalized_status in {"completed", "failed", "cancelled"}:
                 _schedule_file_lifecycle_cleanup()
         else:
             print(f"[WARN] 任务不存在: {task_id}")
@@ -893,25 +1114,56 @@ def recover_stale_compute_state() -> int:
         conn = get_connection()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            task_affected = conn.execute(
+            active_jobs = conn.execute(
                 """
-                UPDATE tasks
-                SET status = 'pending', error_log = ''
+                SELECT job_id, job_type
+                FROM jobs
                 WHERE status IN ({})
                 """.format(",".join("?" for _ in ACTIVE_COMPUTE_STATUSES)),
                 tuple(ACTIVE_COMPUTE_STATUSES),
-            ).rowcount
-            job_affected = conn.execute(
-                """
-                UPDATE jobs
-                SET status = 'pending',
-                    current_stage = 'pending',
-                    error_log = '',
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE status IN ({})
-                """.format(",".join("?" for _ in ACTIVE_COMPUTE_STATUSES)),
-                tuple(ACTIVE_COMPUTE_STATUSES),
-            ).rowcount
+            ).fetchall()
+            job_affected = 0
+            blocked_train_jobs: list[str] = []
+            duplicate_guard_message = (
+                "检测到服务重启时核心训练未闭合，已阻止自动重复派发。"
+                "请人工确认 RVC 训练进程或 checkpoint 后再处理。"
+            )
+            for row in active_jobs:
+                job_id = row["job_id"]
+                if row["job_type"] == "train" and _has_unclosed_stage(conn, job_id, "train_core"):
+                    conn.execute(
+                        """
+                        UPDATE jobs
+                        SET status = '失败',
+                            current_stage = 'train_core',
+                            error_log = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE job_id = ?
+                        """,
+                        (duplicate_guard_message, job_id),
+                    )
+                    conn.execute(
+                        "UPDATE tasks SET status = '失败', error_log = ? WHERE task_id = ?",
+                        (duplicate_guard_message, job_id),
+                    )
+                    blocked_train_jobs.append(job_id)
+                else:
+                    conn.execute(
+                        """
+                        UPDATE jobs
+                        SET status = 'pending',
+                            current_stage = 'pending',
+                            error_log = '',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE job_id = ?
+                        """,
+                        (job_id,),
+                    )
+                    conn.execute(
+                        "UPDATE tasks SET status = 'pending', error_log = '' WHERE task_id = ?",
+                        (job_id,),
+                    )
+                job_affected += 1
             conn.execute(
                 """
                 UPDATE compute_mutex
@@ -922,14 +1174,32 @@ def recover_stale_compute_state() -> int:
                 (COMPUTE_MUTEX_NAME,),
             )
             conn.commit()
-            affected = max(task_affected, job_affected)
-            print(f"[Mutex] 启动恢复完成，回收 tasks={task_affected}, jobs={job_affected}")
+            task_affected = job_affected
+            affected = job_affected
+            print(
+                "[Mutex] 启动恢复完成，"
+                f"回收 tasks={task_affected}, jobs={job_affected}, "
+                f"blocked_train_core={len(blocked_train_jobs)}"
+            )
             return affected
         except Exception:
             conn.rollback()
             raise
         finally:
             conn.close()
+
+
+def _has_unclosed_stage(conn, job_id: str, stage_name: str) -> bool:
+    rows = conn.execute(
+        """
+        SELECT status
+        FROM job_stage_logs
+        WHERE job_id = ? AND stage_name = ?
+        ORDER BY datetime(created_at), rowid
+        """,
+        (job_id, stage_name),
+    ).fetchall()
+    return bool(rows and rows[-1]["status"] == "started")
 
 
 def _schedule_file_lifecycle_cleanup() -> None:
@@ -940,6 +1210,8 @@ def _schedule_file_lifecycle_cleanup() -> None:
     def _worker():
         try:
             file_lifecycle_cleanup()
+        except Exception as exc:
+            print(f"[Cleanup] 后台清理跳过: {exc}")
         finally:
             _cleanup_lock.release()
 
@@ -958,35 +1230,72 @@ def file_lifecycle_cleanup(days: int = 7) -> dict:
     严禁触碰 final_master.wav 和数据库记录。
     """
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-    candidates = [
-        row["task_id"]
-        for row in _query_old_tasks(cutoff)
-    ]
+    candidates = _collect_lifecycle_cleanup_ids(cutoff)
 
     deleted = 0
     scanned = 0
+    try:
+        from .services.lifecycle_service import mark_job_transient_artifacts_purged
+    except ImportError:
+        from services.lifecycle_service import mark_job_transient_artifacts_purged
+
     for task_id in candidates:
         task_dir = os.path.join(OUTPUT_ROOT, task_id)
         if not os.path.isdir(task_dir):
             continue
         scanned += 1
+        removed_paths: list[str] = []
         for name in LIFECYCLE_DELETE_FILENAMES:
             path = os.path.join(task_dir, name)
             if os.path.exists(path):
                 try:
                     os.remove(path)
                     deleted += 1
+                    removed_paths.append(path)
                     print(f"[Cleanup] 已删除: {path}")
                 except Exception as exc:
                     print(f"[Cleanup] 删除失败 {path}: {exc}")
+        if removed_paths:
+            try:
+                mark_job_transient_artifacts_purged(task_id, deleted_paths=removed_paths)
+            except Exception as exc:
+                print(f"[Cleanup] lifecycle 标记失败 {task_id}: {exc}")
 
     print(f"[Cleanup] 盘点完成: 扫描 {scanned} 个任务, 清理 {deleted} 个中间文件")
     return {"scanned_tasks": scanned, "deleted_files": deleted}
 
 
+def _collect_lifecycle_cleanup_ids(cutoff: str) -> list[str]:
+    """Merge legacy tasks.task_id and jobs.job_id candidates, deduplicated in order."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    try:
+        task_rows = _query_old_tasks(cutoff)
+    except Exception as exc:
+        print(f"[Cleanup] legacy tasks 查询跳过: {exc}")
+        task_rows = []
+    for row in task_rows:
+        task_id = row["task_id"]
+        if task_id not in seen:
+            seen.add(task_id)
+            ordered.append(task_id)
+    try:
+        cover_job_ids = _query_old_cover_jobs(cutoff)
+    except Exception as exc:
+        print(f"[Cleanup] cover jobs 查询跳过: {exc}")
+        cover_job_ids = []
+    for job_id in cover_job_ids:
+        if job_id not in seen:
+            seen.add(job_id)
+            ordered.append(job_id)
+    return ordered
+
+
 def _query_old_tasks(cutoff: str) -> list[sqlite3.Row]:
     conn = get_connection()
     try:
+        if not _table_exists(conn, "tasks"):
+            return []
         rows = conn.execute(
             """
             SELECT task_id
@@ -999,6 +1308,31 @@ def _query_old_tasks(cutoff: str) -> list[sqlite3.Row]:
             (cutoff,),
         ).fetchall()
         return rows
+    finally:
+        conn.close()
+
+
+def _query_old_cover_jobs(cutoff: str) -> list[str]:
+    """Old terminal cover jobs from jobs table (jobs-only path uses job_id as output dir)."""
+    conn = get_connection()
+    try:
+        if not _table_exists(conn, "jobs"):
+            return []
+        rows = conn.execute(
+            """
+            SELECT job_id, status
+            FROM jobs
+            WHERE datetime(created_at) < datetime(?)
+              AND job_type = 'cover'
+            ORDER BY datetime(created_at) ASC, rowid ASC
+            """,
+            (cutoff,),
+        ).fetchall()
+        return [
+            row["job_id"]
+            for row in rows
+            if _normalize_status(row["status"]) in {"completed", "failed", "cancelled"}
+        ]
     finally:
         conn.close()
 

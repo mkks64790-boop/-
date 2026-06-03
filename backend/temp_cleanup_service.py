@@ -6,8 +6,13 @@ from pathlib import Path
 
 try:
     from .db import JOBS_ROOT, OUTPUT_ROOT, PROJECT_ROOT
+    from .services.lifecycle_service import mark_job_transient_artifacts_purged
 except ImportError:
     from db import JOBS_ROOT, OUTPUT_ROOT, PROJECT_ROOT
+    try:
+        from services.lifecycle_service import mark_job_transient_artifacts_purged
+    except ImportError:
+        from lifecycle_service import mark_job_transient_artifacts_purged  # type: ignore
 
 TRANSIENT_OUTPUT_FILENAMES = {
     "vocal.wav",
@@ -83,10 +88,18 @@ def cleanup_job_transients(job_id: str, *, keep_output_files: tuple[str, ...] = 
                 if _safe_remove_tree(candidate):
                     removed_dirs.append(candidate)
 
+    purged_artifacts = 0
+    if removed_files:
+        try:
+            purged_artifacts = mark_job_transient_artifacts_purged(job_id, deleted_paths=removed_files)
+        except Exception:
+            purged_artifacts = 0
+
     return {
         "job_id": job_id,
         "removed_files": removed_files,
         "removed_dirs": removed_dirs,
+        "purged_artifact_rows": purged_artifacts,
         "output_root": str(Path(output_root)),
         "job_root": str(Path(job_root)),
     }

@@ -27,9 +27,16 @@ except ImportError:
     )
 
 try:
-    from ..services.smoke_filter import is_smoke_job_record
+    from ..services.smoke_filter import explain_test_data_filter_reason, is_smoke_job_record, is_smoke_model_record
     from ..pipelines.runner import run_registered_pipeline
     from ..services.stage_log_service import list_stage_logs, log_stage
+    from ..services.training_runtime_guard import (
+        DUPLICATE_TRAIN_CORE_CODE,
+        extract_exp_name_from_job,
+        has_unclosed_stage,
+        inspect_training_checkpoint,
+        summarize_training_error,
+    )
     from ..services.track_service import (
         mark_track_cover_job_complete,
         mark_track_cover_job_created,
@@ -39,9 +46,16 @@ try:
         reset_track_cover_job_state,
     )
 except ImportError:
-    from services.smoke_filter import is_smoke_job_record
+    from services.smoke_filter import explain_test_data_filter_reason, is_smoke_job_record, is_smoke_model_record
     from pipelines.runner import run_registered_pipeline
     from services.stage_log_service import list_stage_logs, log_stage
+    from services.training_runtime_guard import (
+        DUPLICATE_TRAIN_CORE_CODE,
+        extract_exp_name_from_job,
+        has_unclosed_stage,
+        inspect_training_checkpoint,
+        summarize_training_error,
+    )
     from services.track_service import (
         mark_track_cover_job_complete,
         mark_track_cover_job_created,
@@ -212,9 +226,14 @@ def canonical_current_stage(job_row: dict | None, stage_logs: list[dict] | None 
         return ""
 
     status = job_row.get("status") or ""
-    if status == "pending":
+    normalized_status = normalize_job_status(status)
+    job_type = job_row.get("job_type") or ""
+    metadata = _parse_metadata(job_row.get("metadata_json"))
+    if job_type == "train" and normalized_status == "completed" and _has_generated_or_recovered_model(job_row, metadata):
+        return "train_register_model"
+    if normalized_status == "pending":
         return "pending"
-    if status == "\u5df2\u53d6\u6d88":
+    if normalized_status == "cancelled":
         return "cancelled"
 
     business_logs = [
@@ -225,15 +244,43 @@ def canonical_current_stage(job_row: dict | None, stage_logs: list[dict] | None 
         return business_logs[-1]["stage_name"]
 
     current_stage = (job_row.get("current_stage") or "").strip()
-    if current_stage and current_stage not in {"job_dispatch", "job_control"}:
+    if current_stage and current_stage not in {"pending", "job_dispatch", "job_control"}:
         return current_stage
 
-    job_type = job_row.get("job_type") or ""
-    if status == "\u5df2\u5b8c\u6210":
+    if normalized_status == "completed":
         return "cover_mix" if job_type == "cover" else "train_register_model"
-    if status == "\u5931\u8d25":
+    if normalized_status == "failed":
         return "failed"
     return status
+
+
+def _parse_metadata(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _has_generated_or_recovered_model(job_row: dict, metadata: dict) -> bool:
+    if metadata.get("recovered_from_checkpoint") or metadata.get("recovered_model_id"):
+        return True
+    job_id = job_row.get("job_id") or job_row.get("legacy_task_id") or ""
+    if not job_id:
+        return False
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT voice_model_id FROM voice_models WHERE source_job_id = ? LIMIT 1",
+            (job_id,),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
 
 
 def _row_to_job(row: dict) -> BaseJob:
@@ -336,6 +383,21 @@ def complete_job(job_id: str) -> None:
     update_task_status(job_id, "\u5df2\u5b8c\u6210", "")
 
 
+def normalize_job_status(status: str) -> str:
+    value = (status or "").strip().lower()
+    if value in {"pending", "queued", "排队中", "等待中"}:
+        return "pending"
+    if value in {"完成", "已完成", "completed", "complete", "done", "success", "succeeded"}:
+        return "completed"
+    if value in {"失败", "failed", "fail", "error"}:
+        return "failed"
+    if value in {"已取消", "cancelled", "canceled"}:
+        return "cancelled"
+    if value in {"训练中", "处理中", "running", "processing", "分离中", "修音中", "变声中", "混音中", "切片中"}:
+        return "processing"
+    return value
+
+
 def get_next_pending_job() -> BaseJob | None:
     conn = get_connection()
     try:
@@ -354,6 +416,29 @@ def get_next_pending_job() -> BaseJob | None:
     return _row_to_job(dict(row)) if row else None
 
 
+def _test_voice_model_ids(conn) -> set[str]:
+    rows = conn.execute("SELECT * FROM voice_models").fetchall()
+    model_ids: set[str] = set()
+    for row in rows:
+        item = dict(row)
+        if is_smoke_model_record(item):
+            for key in ("voice_model_id", "legacy_model_id"):
+                value = item.get(key)
+                if value:
+                    model_ids.add(str(value))
+    return model_ids
+
+
+def _job_filter_reason(item: dict, test_model_ids: set[str] | None = None) -> str:
+    reason = explain_test_data_filter_reason(item, kind="job")
+    if reason:
+        return reason
+    model_id = str(item.get("voice_model_id") or "").strip()
+    if model_id and test_model_ids and model_id in test_model_ids:
+        return "voice_model.test_data"
+    return ""
+
+
 def list_jobs(
     job_type: str | None = None,
     status: str | None = None,
@@ -362,6 +447,7 @@ def list_jobs(
     limit: int = 50,
     offset: int = 0,
     include_smoke: bool = False,
+    include_test_data: bool = False,
 ) -> list[dict]:
     conn = get_connection()
     try:
@@ -370,9 +456,7 @@ def list_jobs(
         if job_type:
             query += " AND job_type = ?"
             params.append(job_type)
-        if status:
-            query += " AND status = ?"
-            params.append(status)
+        normalized_filter = normalize_job_status(status) if status else ""
         if strategy_key:
             query += " AND strategy_key = ?"
             params.append(strategy_key)
@@ -382,34 +466,78 @@ def list_jobs(
         query += " ORDER BY datetime(created_at) DESC, rowid DESC"
         rows = conn.execute(query, tuple(params)).fetchall()
         items = [dict(r) for r in rows]
-        if not include_smoke:
-            items = [item for item in items if not is_smoke_job_record(item)]
+        test_model_ids = _test_voice_model_ids(conn)
+        include_filtered = bool(include_smoke or include_test_data)
+        if not include_filtered:
+            items = [item for item in items if not _job_filter_reason(item, test_model_ids)]
+        else:
+            for item in items:
+                reason = _job_filter_reason(item, test_model_ids)
+                if reason:
+                    item["filter_reason"] = reason
+        if status:
+            items = [item for item in items if normalize_job_status(item.get("status") or "") == normalized_filter]
         return items[offset: offset + limit]
     finally:
         conn.close()
 
 
-def job_summary(include_smoke: bool = False) -> dict:
+def hidden_test_job_count(
+    job_type: str | None = None,
+    status: str | None = None,
+    strategy_key: str | None = None,
+    voice_name: str | None = None,
+) -> int:
+    conn = get_connection()
+    try:
+        query = "SELECT * FROM jobs WHERE 1=1"
+        params: list[object] = []
+        if job_type:
+            query += " AND job_type = ?"
+            params.append(job_type)
+        if strategy_key:
+            query += " AND strategy_key = ?"
+            params.append(strategy_key)
+        if voice_name:
+            query += " AND voice_name LIKE ?"
+            params.append(f"%{voice_name}%")
+        rows = [dict(row) for row in conn.execute(query, tuple(params)).fetchall()]
+        test_model_ids = _test_voice_model_ids(conn)
+        if status:
+            normalized_filter = normalize_job_status(status)
+            rows = [row for row in rows if normalize_job_status(row.get("status") or "") == normalized_filter]
+        return sum(1 for row in rows if _job_filter_reason(row, test_model_ids))
+    finally:
+        conn.close()
+
+
+def job_summary(include_smoke: bool = False, include_test_data: bool = False) -> dict:
     conn = get_connection()
     try:
         rows = [
             dict(row)
-            for row in conn.execute("SELECT status, job_type, voice_name, metadata_json FROM jobs").fetchall()
+            for row in conn.execute("SELECT job_id, legacy_task_id, status, job_type, voice_name, voice_model_id, input_path, output_root, metadata_json FROM jobs").fetchall()
         ]
-        if not include_smoke:
-            rows = [row for row in rows if not is_smoke_job_record(row)]
+        test_model_ids = _test_voice_model_ids(conn)
+        hidden_test_count = sum(1 for row in rows if _job_filter_reason(row, test_model_ids))
+        if not (include_smoke or include_test_data):
+            rows = [row for row in rows if not _job_filter_reason(row, test_model_ids)]
         status_counts: dict[str, int] = {}
         type_counts: dict[str, int] = {}
         for row in rows:
-            status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
+            normalized_status = normalize_job_status(row["status"])
+            status_counts[normalized_status] = status_counts.get(normalized_status, 0) + 1
             type_counts[row["job_type"]] = type_counts.get(row["job_type"], 0) + 1
         return {
             "pending_count": status_counts.get("pending", 0),
-            "processing_count": sum(status_counts.get(status, 0) for status in ACTIVE_COMPUTE_STATUSES),
-            "failed_count": status_counts.get("\u5931\u8d25", 0),
-            "completed_count": status_counts.get("\u5df2\u5b8c\u6210", 0),
+            "processing_count": status_counts.get("processing", 0),
+            "failed_count": status_counts.get("failed", 0),
+            "completed_count": status_counts.get("completed", 0),
+            "cancelled_count": status_counts.get("cancelled", 0),
             "cover_count": type_counts.get("cover", 0),
             "train_count": type_counts.get("train", 0),
+            "hidden_test_count": hidden_test_count,
+            "include_test_data": bool(include_smoke or include_test_data),
         }
     finally:
         conn.close()
@@ -456,7 +584,7 @@ def retry_job(job_id: str) -> dict:
     job = get_job(job_id)
     if not job:
         return {"ok": False, "error": "job_not_found", "message": "浠诲姟涓嶅瓨鍦?"}
-    if job.status != "\u5931\u8d25":
+    if normalize_job_status(job.status) != "failed":
         return {"ok": False, "error": "only_failed_job_can_retry", "message": "鍙湁澶辫触浠诲姟鎵嶈兘閲嶈瘯"}
     set_job_pending(job_id, "")
     if job.track_id and job.job_kind == "cover":
@@ -473,7 +601,7 @@ def requeue_job(job_id: str) -> dict:
     job = get_job(job_id)
     if not job:
         return {"ok": False, "error": "job_not_found", "message": "浠诲姟涓嶅瓨鍦?"}
-    if job.status not in {"pending", "\u5931\u8d25"}:
+    if normalize_job_status(job.status) not in {"pending", "failed"}:
         return {
             "ok": False,
             "error": "only_pending_or_failed_job_can_requeue",
@@ -494,7 +622,7 @@ def cancel_job(job_id: str) -> dict:
     job = get_job(job_id)
     if not job:
         return {"ok": False, "error": "job_not_found", "message": "浠诲姟涓嶅瓨鍦?"}
-    if job.status != "pending":
+    if normalize_job_status(job.status) != "pending":
         return {"ok": False, "error": "only_pending_job_can_cancel", "message": "鍙湁 pending 浠诲姟鎵嶈兘鍙栨秷"}
     update_task_status(job_id, "\u5df2\u53d6\u6d88", "cancelled by user")
     if job.track_id and job.job_kind == "cover":
@@ -514,6 +642,28 @@ def execute_job(job_id: str) -> dict:
         return {"success": False, "error": "job_not_found"}
 
     dispatch_key = job.strategy_key or job.job_kind or job.job_type
+    if job.job_type == "train" and has_unclosed_stage(job.job_id, "train_core"):
+        job_row = get_job_row(job.job_id) or {}
+        stage_logs = list_stage_logs(job.job_id)
+        exp_name = extract_exp_name_from_job(job_row, stage_logs)
+        checkpoint = inspect_training_checkpoint(exp_name) if exp_name else {}
+        error = "检测到该训练任务已有未闭合的核心训练记录，已阻止重复派发。请先人工确认 RVC 进程与 checkpoint 状态。"
+        summary = summarize_training_error(f"{DUPLICATE_TRAIN_CORE_CODE}: {error}", exp_name=exp_name, checkpoint=checkpoint)
+        fail_job(job.job_id, error)
+        log_stage(
+            job.job_id,
+            "job_dispatch",
+            "failed",
+            "duplicate train_core dispatch blocked",
+            {
+                "error_code": DUPLICATE_TRAIN_CORE_CODE,
+                "exp_name": exp_name,
+                "checkpoint": checkpoint,
+                "error_summary": summary,
+            },
+        )
+        return {"success": False, "error": error, "error_summary": summary}
+
     log_stage(job.job_id, "job_dispatch", "started", f"dispatch -> {dispatch_key}")
     try:
         result = run_registered_pipeline(job)

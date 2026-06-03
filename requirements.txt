@@ -1,0 +1,35 @@
+# FeiShark Studio — Python dependencies (scanned from backend/*.py, backend/services/*.py)
+# Target: Python 3.11–3.14
+#
+# NOT managed here (external / separate install):
+#   - RVC / RVC-WebUI training stack (model_trainer.RVC_PYTHON, infer-web, etc.)
+#   - ffmpeg on PATH (subprocess in vocal_separator, pitch_processor, studio_effect_service, …)
+#   - UVR / ONNX model weights on disk
+#   - pitch_processor local modules (inference_v3, pitch_corrector, …) shipped with RVC tooling
+#
+# GPU hosts: replace onnxruntime with onnxruntime-gpu if CUDA is available.
+
+# ── Web API ──────────────────────────────────────────────────────────────────
+fastapi>=0.115.0,<1.0
+uvicorn[standard]>=0.30.0,<1.0
+pydantic>=2.7.0,<3.0
+python-multipart>=0.0.9
+
+# ── HTTP / RVC Gradio bridge ─────────────────────────────────────────────────
+requests>=2.31.0,<3.0
+gradio_client>=1.4.0,<3.0
+
+# ── Audio / DSP (audio_mixer, vocal_separator, pitch_processor) ──────────────
+numpy>=1.26.0,<3.0
+soundfile>=0.12.0
+librosa>=0.10.0
+pedalboard>=0.9.0
+onnxruntime>=1.18.0
+
+# ── Training helpers (model_trainer feature-index step) ──────────────────────
+faiss-cpu>=1.7.4,<2.0
+scikit-learn>=1.4.0,<2.0
+
+# ── Dev / test (pytest suite, FastAPI TestClient) ────────────────────────────
+pytest>=8.0.0,<10.0
+httpx>=0.27.0,<1.0

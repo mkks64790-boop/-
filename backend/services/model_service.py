@@ -4,10 +4,12 @@ import uuid
 
 try:
     from ..db import get_connection
-    from .smoke_filter import is_smoke_model_record
+    from .lifecycle_service import enrich_voice_model, infer_voice_model_lifecycle, should_default_hide_lifecycle
+    from .smoke_filter import explain_test_data_filter_reason, is_smoke_model_record
 except ImportError:
     from db import get_connection
-    from services.smoke_filter import is_smoke_model_record
+    from services.lifecycle_service import enrich_voice_model, infer_voice_model_lifecycle, should_default_hide_lifecycle
+    from services.smoke_filter import explain_test_data_filter_reason, is_smoke_model_record
 
 
 ORIGIN_LABELS = {
@@ -262,8 +264,9 @@ def _collect_lineage_fields(model: dict) -> dict:
 def _enrich_model_row(model: dict, project_root: str, weights_dir: str, *, resolved: dict | None = None) -> dict:
     resolved = resolved or resolve_voice_model_file(model.get("legacy_model_id") or model.get("voice_model_id"), project_root, weights_dir)
     lineage = _collect_lineage_fields(model)
+    lifecycle_state = infer_voice_model_lifecycle(model)
     return {
-        **model,
+        **enrich_voice_model(model),
         "exists": True,
         "model_id": model.get("legacy_model_id") or model.get("voice_model_id"),
         "usable": bool(resolved["ok"]),
@@ -274,6 +277,7 @@ def _enrich_model_row(model: dict, project_root: str, weights_dir: str, *, resol
         "resolved_index_path": resolved.get("resolved_index_path", ""),
         "resolved_index_source": resolved.get("index_source", ""),
         "metadata": _parse_json_object(model.get("metadata_json")),
+        "lifecycle_state": lifecycle_state,
         **lineage,
     }
 
@@ -313,16 +317,25 @@ def upsert_voice_model(
 ) -> str:
     legacy_model_id = legacy_model_id or voice_model_id
     source_job_id = source_job_id or None
+    metadata_payload = metadata or {}
+    lifecycle_state = infer_voice_model_lifecycle(
+        {
+            "voice_model_id": voice_model_id,
+            "model_name": model_name,
+            "status": status,
+            "metadata_json": json.dumps(metadata_payload, ensure_ascii=False),
+        }
+    )
     conn = get_connection()
     try:
         conn.execute(
             """
             INSERT OR REPLACE INTO voice_models (
                 voice_model_id, legacy_model_id, model_name, source_job_id,
-                pth_path, index_path, default_pitch, status, metadata_json,
+                pth_path, index_path, default_pitch, status, lifecycle_state, metadata_json,
                 created_at, updated_at
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                 COALESCE((SELECT created_at FROM voice_models WHERE voice_model_id = ?), CURRENT_TIMESTAMP),
                 CURRENT_TIMESTAMP
             )
@@ -336,7 +349,8 @@ def upsert_voice_model(
                 index_path,
                 default_pitch,
                 status,
-                json.dumps(metadata or {}, ensure_ascii=False),
+                lifecycle_state,
+                json.dumps(metadata_payload, ensure_ascii=False),
                 voice_model_id,
             ),
         )
@@ -432,23 +446,26 @@ def list_models(
     weights_dir: str,
     include_unavailable: bool = False,
     include_smoke: bool = False,
+    include_test_data: bool = False,
 ) -> list[dict]:
     conn = get_connection()
     try:
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM voice_models
-            ORDER BY datetime(created_at), rowid
-            """
-        ).fetchall()
+        include_filtered = bool(include_smoke or include_test_data)
+        query = "SELECT * FROM voice_models"
+        if not include_filtered:
+            query += " WHERE COALESCE(lifecycle_state, 'active') NOT IN ('test_data', 'purged')"
+        query += " ORDER BY datetime(created_at), rowid"
+        rows = conn.execute(query).fetchall()
     finally:
         conn.close()
 
     result = []
     for row in rows:
         row_dict = dict(row)
-        if not include_smoke and is_smoke_model_record(row_dict):
+        filter_reason = explain_test_data_filter_reason(row_dict, kind="model")
+        if not include_filtered and filter_reason:
+            continue
+        if not include_filtered and should_default_hide_lifecycle(row_dict.get("lifecycle_state")):
             continue
         enriched = _enrich_model_row(
             row_dict,
@@ -478,6 +495,8 @@ def list_models(
             "created_at": enriched.get("created_at") or "",
             "updated_at": enriched.get("updated_at") or "",
         }
+        if filter_reason:
+            item["filter_reason"] = filter_reason
         if include_unavailable or item["usable"]:
             result.append(item)
     return result
@@ -485,6 +504,28 @@ def list_models(
 
 def list_available_models(project_root: str, weights_dir: str) -> list[dict]:
     return list_models(project_root, weights_dir, include_unavailable=False)
+
+
+def hidden_test_model_count(
+    project_root: str,
+    weights_dir: str,
+    include_unavailable: bool = False,
+) -> int:
+    visible_items = list_models(
+        project_root,
+        weights_dir,
+        include_unavailable=include_unavailable,
+        include_smoke=False,
+        include_test_data=False,
+    )
+    included_items = list_models(
+        project_root,
+        weights_dir,
+        include_unavailable=include_unavailable,
+        include_smoke=True,
+        include_test_data=True,
+    )
+    return max(0, len(included_items) - len(visible_items))
 
 
 def import_voice_model(
