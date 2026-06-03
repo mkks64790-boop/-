@@ -172,6 +172,10 @@ try:
     )
     from .services.stage59_listening_bridge_service import get_listening_contract_for_run
     from .services.stage59_transient_artifact_service import get_transient_run
+    from .services.stage59_execution_policy_service import (
+        REAL_RUNNER_NOT_ENABLED_REASON,
+        evaluate_execution_policy,
+    )
     from .services.stage59_uvr_mock_execute_service import mock_execute_uvr_ab
     from .strategies.strategy_registry import resolve_train_strategy
 except ImportError:
@@ -301,6 +305,10 @@ except ImportError:
     )
     from services.stage59_listening_bridge_service import get_listening_contract_for_run
     from services.stage59_transient_artifact_service import get_transient_run
+    from services.stage59_execution_policy_service import (
+        REAL_RUNNER_NOT_ENABLED_REASON,
+        evaluate_execution_policy,
+    )
     from services.stage59_uvr_mock_execute_service import mock_execute_uvr_ab
     from strategies.strategy_registry import resolve_train_strategy
 
@@ -761,6 +769,17 @@ class Stage59UvrAbMockExecuteRequest(BaseModel):
     manifest_path: str | None = None
     skip_file_exists: bool = False
     clip_seconds: int = 45
+
+
+class Stage59UvrAbApprovalPreflightRequest(BaseModel):
+    entry_id: str
+    manifest_path: str | None = None
+    skip_file_exists: bool = False
+    clip_seconds: int = 45
+    confirm_execute: bool = False
+    approval_token: str | None = None
+    requested_mode: Literal["approval_preflight", "real_execute"] = "approval_preflight"
+    max_items: int = 1
 
 
 class TrainingRecoveryRegisterRequest(BaseModel):
@@ -1797,10 +1816,18 @@ async def post_separation_eval_run_disabled():
 @app.get("/api/stage59/short-chain/uvr-ab/contract", summary="Stage59C UVR A/B contract (dry-run + readiness)")
 async def get_stage59_uvr_ab_contract():
     return {
-        "stage": "stage59c2",
+        "stage": "stage59c3",
         "mode_default": "dry_run",
+        "supported_modes": [
+            "dry_run",
+            "readiness",
+            "mock_execute",
+            "approval_preflight",
+            "real_execute",
+        ],
         "readiness_supported": True,
         "mock_execute_supported": True,
+        "approval_preflight_supported": True,
         "execute_allowed": False,
         "real_execute_allowed": False,
         "execute_block_reason": STAGE59C0_EXECUTE_BLOCK_REASON,
@@ -1825,6 +1852,10 @@ async def get_stage59_uvr_ab_contract():
         ),
         "mock_execute_cli": (
             "python backend\\verify_stage59_uvr_ab.py --mock-execute --entry-id <id> "
+            "--manifest <allowed-path> --skip-file-exists"
+        ),
+        "approval_preflight_cli": (
+            "python backend\\verify_stage59_uvr_ab.py --approval-preflight --entry-id <id> "
             "--manifest <allowed-path> --skip-file-exists"
         ),
     }
@@ -1942,6 +1973,41 @@ async def get_stage59_uvr_mock_execute_listening_contract(run_id: str):
         "real_execute_allowed": False,
         "playback_enabled": False,
     }
+
+
+@app.post(
+    "/api/stage59/short-chain/uvr-ab/approval-preflight",
+    summary="Stage59C-3 approval preflight (real execute still blocked)",
+)
+async def post_stage59_uvr_ab_approval_preflight(payload: Stage59UvrAbApprovalPreflightRequest):
+    from pathlib import Path
+
+    root = Path(PROJECT_ROOT)
+    manifest = _resolve_stage59_manifest_or_400(payload.manifest_path)
+    result = evaluate_execution_policy(
+        payload.entry_id,
+        manifest_path=manifest,
+        project_root=root,
+        clip_seconds=payload.clip_seconds,
+        check_file_exists=not payload.skip_file_exists,
+        confirm_execute=payload.confirm_execute,
+        approval_token=payload.approval_token,
+        requested_mode=payload.requested_mode,
+        max_items=payload.max_items,
+    )
+    if payload.requested_mode == "real_execute":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                **result,
+                "reason": REAL_RUNNER_NOT_ENABLED_REASON,
+                "real_execute_allowed": False,
+            },
+        )
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result)
+    result["real_execute_allowed"] = False
+    return result
 
 
 @app.post("/api/stage59/short-chain/uvr-ab/execute", summary="Stage59C-0 UVR execute (blocked)")
