@@ -39,6 +39,34 @@ _LEGACY_RVC_WEBUI_DIR_CANDIDATES = (
 RVC_CONFIGS_DIR = os.path.join(RVC_WEBUI_DIR, "configs", "inuse")
 RVC_LOGS_DIR = os.path.join(RVC_WEBUI_DIR, "logs")
 RVC_MUTE_DIR = os.path.join(RVC_WEBUI_DIR, "logs", "mute")
+_RVC_MUTE_SOURCE_ROOTS = (
+    RVC_MUTE_DIR,
+    r"D:\RVC\RVCv2\logs\mute",
+    r"D:\RVC\RVC\logs\mute",
+)
+
+
+def _ensure_rvc_mute_assets() -> None:
+    """Bundle training needs logs/mute; copy from a local RVC install when missing."""
+    marker = os.path.join(RVC_MUTE_DIR, "0_gt_wavs", "mute40k.wav")
+    if os.path.exists(marker):
+        return
+    for src_root in _RVC_MUTE_SOURCE_ROOTS:
+        if os.path.normcase(src_root) == os.path.normcase(RVC_MUTE_DIR):
+            continue
+        src_marker = os.path.join(src_root, "0_gt_wavs", "mute40k.wav")
+        if not os.path.exists(src_marker):
+            continue
+        os.makedirs(os.path.dirname(RVC_MUTE_DIR), exist_ok=True)
+        if os.path.isdir(RVC_MUTE_DIR):
+            shutil.rmtree(RVC_MUTE_DIR, ignore_errors=True)
+        shutil.copytree(src_root, RVC_MUTE_DIR)
+        return
+    raise FileNotFoundError(
+        f"RVC mute assets missing under {RVC_MUTE_DIR}. "
+        "Copy logs/mute from a full RVC-WebUI install into external/rvc-webui/logs/mute."
+    )
+
 
 _LEGACY_RVC_PYTHON_CANDIDATES = (
     os.path.join(RVC_WEBUI_DIR, "runtime", "python.exe"),
@@ -323,6 +351,11 @@ def _prepare_direct_trainset(source_files: list[str], exp_name: str, training_co
         )
 
 
+def _filelist_path(path: str) -> str:
+    """RVC filelist expects plain paths; forward slashes avoid Windows escape bugs."""
+    return os.path.abspath(path).replace("\\", "/")
+
+
 def _ensure_train_dirs(exp_name: str) -> tuple[str, str]:
     exp_dir = os.path.join(RVC_LOGS_DIR, exp_name)
     gt_dir = os.path.join(exp_dir, "0_gt_wavs")
@@ -399,12 +432,12 @@ def _prepare_rvc_experiment(exp_name: str, training_config: dict | None = None) 
         if not wav_name.lower().endswith(".wav"):
             continue
         stem = os.path.splitext(wav_name)[0]
-        wav_path = os.path.join(gt_wavs_dir, wav_name).replace("\\", "\\\\")
-        feature_path = os.path.join(feature_dir, f"{stem}.npy").replace("\\", "\\\\")
+        wav_path = _filelist_path(os.path.join(gt_wavs_dir, wav_name))
+        feature_path = _filelist_path(os.path.join(feature_dir, f"{stem}.npy"))
         if options["f0_enabled"]:
-            f0_path = os.path.join(f0_dir, f"{wav_name}.npy").replace("\\", "\\\\")
-            f0nsf_path = os.path.join(f0nsf_dir, f"{wav_name}.npy").replace("\\", "\\\\")
-            if not (os.path.exists(f0_path.replace("\\\\", "\\")) and os.path.exists(f0nsf_path.replace("\\\\", "\\"))):
+            f0_path = _filelist_path(os.path.join(f0_dir, f"{wav_name}.npy"))
+            f0nsf_path = _filelist_path(os.path.join(f0nsf_dir, f"{wav_name}.npy"))
+            if not (os.path.exists(f0_path) and os.path.exists(f0nsf_path)):
                 continue
             entries.append(f"{wav_path}|{feature_path}|{f0_path}|{f0nsf_path}|0")
         else:
@@ -415,20 +448,29 @@ def _prepare_rvc_experiment(exp_name: str, training_config: dict | None = None) 
 
     mute_sr = options["sample_rate"]
     mute_feature_dir = "3_feature768" if TRAIN_VERSION == "v2" else "3_feature256"
+    _ensure_rvc_mute_assets()
     for _ in range(2):
         if options["f0_enabled"]:
             entries.append(
-                f"{os.path.join(RVC_MUTE_DIR, '0_gt_wavs', f'mute{mute_sr}.wav').replace('\\', '\\\\')}"
-                f"|{os.path.join(RVC_MUTE_DIR, mute_feature_dir, 'mute.npy').replace('\\', '\\\\')}"
-                f"|{os.path.join(RVC_MUTE_DIR, '2a_f0', 'mute.wav.npy').replace('\\', '\\\\')}"
-                f"|{os.path.join(RVC_MUTE_DIR, '2b-f0nsf', 'mute.wav.npy').replace('\\', '\\\\')}"
-                f"|0"
+                "|".join(
+                    [
+                        _filelist_path(os.path.join(RVC_MUTE_DIR, "0_gt_wavs", f"mute{mute_sr}.wav")),
+                        _filelist_path(os.path.join(RVC_MUTE_DIR, mute_feature_dir, "mute.npy")),
+                        _filelist_path(os.path.join(RVC_MUTE_DIR, "2a_f0", "mute.wav.npy")),
+                        _filelist_path(os.path.join(RVC_MUTE_DIR, "2b-f0nsf", "mute.wav.npy")),
+                        "0",
+                    ]
+                )
             )
         else:
             entries.append(
-                f"{os.path.join(RVC_MUTE_DIR, '0_gt_wavs', f'mute{mute_sr}.wav').replace('\\', '\\\\')}"
-                f"|{os.path.join(RVC_MUTE_DIR, mute_feature_dir, 'mute.npy').replace('\\', '\\\\')}"
-                f"|0"
+                "|".join(
+                    [
+                        _filelist_path(os.path.join(RVC_MUTE_DIR, "0_gt_wavs", f"mute{mute_sr}.wav")),
+                        _filelist_path(os.path.join(RVC_MUTE_DIR, mute_feature_dir, "mute.npy")),
+                        "0",
+                    ]
+                )
             )
 
     shuffle(entries)

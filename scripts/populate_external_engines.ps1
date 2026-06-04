@@ -26,6 +26,15 @@ function Invoke-Robo([string]$Src, [string]$Dst, [string[]]$ExtraArgs) {
 Write-Host "=== Populate external engines ==="
 Invoke-Robo -Src $primarySrc -Dst $primaryDst -ExtraArgs @()
 
+# Training filelist needs logs/mute (excluded from main tree copy).
+$muteSrc = Join-Path $primarySrc "logs\mute"
+$muteDst = Join-Path $primaryDst "logs\mute"
+if (Test-Path -LiteralPath $muteSrc) {
+    Invoke-Robo -Src $muteSrc -Dst $muteDst -ExtraArgs @()
+} else {
+    Write-Warning "RVC mute assets missing at $muteSrc — training may fail until logs/mute is present."
+}
+
 Invoke-Robo -Src $audioSrc -Dst $audioDst -ExtraArgs @()
 
 # Backup: full tree except logs; weights junction to primary to avoid duplicate ~30GB.
