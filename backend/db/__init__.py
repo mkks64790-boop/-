@@ -20,7 +20,7 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # ── Split imports (relative, governance) ─────────────────────────────────────
 from .connection import DB_PATH as _DEFAULT_DB_PATH
@@ -375,7 +375,7 @@ def apply_migrations(conn: sqlite3.Connection | None = None) -> list[str]:
             print(f"[MIGRATE] Applied PY migration: {mig_id}")
         conn.execute(
             "INSERT OR REPLACE INTO schema_migrations (id, applied_at, checksum) VALUES (?, ?, ?)",
-            (mig_id, datetime.now(datetime.UTC).isoformat(), checksum),
+            (mig_id, datetime.now(timezone.utc).isoformat(), checksum),
         )
         applied_ids.append(mig_id)
     return applied_ids
