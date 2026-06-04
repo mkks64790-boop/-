@@ -10,7 +10,9 @@ from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 try:
-    from ..db import PROJECT_ROOT as _DEFAULT_PROJECT_ROOT, get_connection
+    from ..db import PROJECT_ROOT as _DEFAULT_PROJECT_ROOT
+    from ..repositories.artifact_repository import ArtifactRepository
+    from ..repositories.job_repository import JobRepository
     from .dataset_service import ensure_job_dirs
     from .lifecycle_service import (
         enrich_job_artifact,
@@ -19,7 +21,9 @@ try:
         resolve_register_job_artifact_lifecycle,
     )
 except ImportError:
-    from db import PROJECT_ROOT as _DEFAULT_PROJECT_ROOT, get_connection
+    from db import PROJECT_ROOT as _DEFAULT_PROJECT_ROOT
+    from repositories.artifact_repository import ArtifactRepository
+    from repositories.job_repository import JobRepository
     from services.dataset_service import ensure_job_dirs
     from services.lifecycle_service import (
         enrich_job_artifact,
@@ -27,6 +31,14 @@ except ImportError:
         resolve_register_audio_asset_lifecycle,
         resolve_register_job_artifact_lifecycle,
     )
+
+
+def _artifact_repo() -> ArtifactRepository:
+    return ArtifactRepository()
+
+
+def _job_repo() -> JobRepository:
+    return JobRepository()
 
 
 def resolve_project_file_path(path: str, project_root: str | None = None) -> str:
@@ -97,60 +109,32 @@ def register_audio_asset(
     duration_sec: float = 0.0,
     metadata: dict | None = None,
 ) -> str:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            """
-            SELECT asset_id
-            FROM audio_assets
-            WHERE job_id = ? AND COALESCE(dataset_id, '') = COALESCE(?, '') AND asset_role = ? AND file_path = ?
-            LIMIT 1
-            """,
-            (job_id, dataset_id, asset_role, file_path),
-        ).fetchone()
-        if row:
-            return row["asset_id"]
-    finally:
-        conn.close()
+    repo = _artifact_repo()
+    existing = repo.find_audio_asset(job_id, asset_role, file_path, dataset_id=dataset_id)
+    if existing:
+        return existing["asset_id"]
 
     asset_id = f"asset_{uuid.uuid4().hex[:12]}"
     file_name = file_name or os.path.basename(file_path)
     file_ext = file_ext or os.path.splitext(file_name)[1].lower()
     file_size = file_size if file_size is not None else (os.path.getsize(file_path) if os.path.exists(file_path) else 0)
 
-    conn = get_connection()
-    try:
-        job_row = conn.execute(
-            "SELECT job_id, job_type, status, metadata_json, voice_name, strategy_key FROM jobs WHERE job_id = ? LIMIT 1",
-            (job_id,),
-        ).fetchone()
-        job_dict = dict(job_row) if job_row else None
-        lifecycle_state = resolve_register_audio_asset_lifecycle(asset_role=asset_role, job_row=job_dict)
-        conn.execute(
-            """
-            INSERT INTO audio_assets (
-                asset_id, dataset_id, job_id, asset_role, file_name, file_ext,
-                file_path, file_size, duration_sec, lifecycle_state, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                asset_id,
-                dataset_id,
-                job_id,
-                asset_role,
-                file_name,
-                file_ext,
-                file_path,
-                file_size,
-                duration_sec,
-                lifecycle_state,
-                json.dumps(metadata or {}, ensure_ascii=False),
-            ),
-        )
-        conn.commit()
-        return asset_id
-    finally:
-        conn.close()
+    job_dict = _job_repo().get(job_id)
+    lifecycle_state = resolve_register_audio_asset_lifecycle(asset_role=asset_role, job_row=job_dict)
+    repo.register_audio_asset(
+        asset_id=asset_id,
+        job_id=job_id,
+        asset_role=asset_role,
+        file_name=file_name,
+        file_path=file_path,
+        file_ext=file_ext,
+        file_size=file_size,
+        duration_sec=duration_sec,
+        dataset_id=dataset_id,
+        lifecycle_state=lifecycle_state,
+        metadata=metadata,
+    )
+    return asset_id
 
 
 def register_job_artifact(
@@ -179,76 +163,38 @@ def register_job_artifact(
     if metadata:
         metadata_payload.update(metadata)
 
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            """
-            SELECT artifact_id, is_final, metadata_json
-            FROM job_artifacts
-            WHERE job_id = ? AND stage_name = ? AND artifact_type = ? AND file_path = ?
-            LIMIT 1
-            """,
-            (job_id, stage_name, artifact_type, artifact_path),
-        ).fetchone()
-        if row:
-            existing_metadata = _parse_metadata(row["metadata_json"])
-            existing_metadata.update(metadata_payload)
-            conn.execute(
-                """
-                UPDATE job_artifacts
-                SET file_size = ?,
-                    is_final = CASE WHEN is_final = 1 OR ? = 1 THEN 1 ELSE 0 END,
-                    metadata_json = ?
-                WHERE artifact_id = ?
-                """,
-                (
-                    file_size,
-                    1 if is_final else 0,
-                    json.dumps(existing_metadata, ensure_ascii=False),
-                    row["artifact_id"],
-                ),
-            )
-            conn.commit()
-            return row["artifact_id"]
-    finally:
-        conn.close()
+    repo = _artifact_repo()
+    row = repo.find_job_artifact(job_id, stage_name, artifact_type, artifact_path)
+    if row:
+        existing_metadata = _parse_metadata(row["metadata_json"])
+        existing_metadata.update(metadata_payload)
+        repo.patch_job_artifact(
+            row["artifact_id"],
+            file_size=file_size,
+            is_final=is_final,
+            metadata_json=json.dumps(existing_metadata, ensure_ascii=False),
+        )
+        return row["artifact_id"]
 
     artifact_id = f"art_{uuid.uuid4().hex[:12]}"
-    conn = get_connection()
-    try:
-        job_row = conn.execute(
-            "SELECT job_id, job_type, status, metadata_json, voice_name, strategy_key FROM jobs WHERE job_id = ? LIMIT 1",
-            (job_id,),
-        ).fetchone()
-        job_dict = dict(job_row) if job_row else None
-        lifecycle_state = resolve_register_job_artifact_lifecycle(
-            artifact_type=artifact_type,
-            is_final=is_final,
-            job_row=job_dict,
-        )
-        conn.execute(
-            """
-            INSERT INTO job_artifacts (
-                artifact_id, job_id, stage_name, artifact_type,
-                file_path, file_size, is_final, lifecycle_state, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                artifact_id,
-                job_id,
-                stage_name,
-                artifact_type,
-                artifact_path,
-                file_size,
-                1 if is_final else 0,
-                lifecycle_state,
-                json.dumps(metadata_payload, ensure_ascii=False),
-            ),
-        )
-        conn.commit()
-        return artifact_id
-    finally:
-        conn.close()
+    job_dict = _job_repo().get(job_id)
+    lifecycle_state = resolve_register_job_artifact_lifecycle(
+        artifact_type=artifact_type,
+        is_final=is_final,
+        job_row=job_dict,
+    )
+    repo.upsert_artifact(
+        artifact_id=artifact_id,
+        job_id=job_id,
+        stage_name=stage_name,
+        artifact_type=artifact_type,
+        file_path=artifact_path,
+        file_size=file_size,
+        is_final=is_final,
+        lifecycle_state=lifecycle_state,
+        metadata=metadata_payload,
+    )
+    return artifact_id
 
 
 def register_cover_stage_outputs(job_id: str, stage_name: str) -> list[str]:
@@ -273,43 +219,16 @@ def register_cover_stage_outputs(job_id: str, stage_name: str) -> list[str]:
     return artifact_ids
 
 
-def _job_row_for_lifecycle(conn, job_id: str) -> dict | None:
-    row = conn.execute(
-        "SELECT job_id, job_type, status, metadata_json, voice_name, strategy_key FROM jobs WHERE job_id = ? LIMIT 1",
-        (job_id,),
-    ).fetchone()
-    return dict(row) if row else None
-
-
 def list_job_artifacts(job_id: str) -> list[dict]:
-    conn = get_connection()
-    try:
-        job_row = _job_row_for_lifecycle(conn, job_id)
-        rows = conn.execute(
-            "SELECT * FROM job_artifacts WHERE job_id = ? ORDER BY datetime(created_at), rowid",
-            (job_id,),
-        ).fetchall()
-        return [enrich_job_artifact(dict(row), job_row=job_row) for row in rows]
-    finally:
-        conn.close()
+    job_row = _job_repo().get(job_id)
+    rows = _artifact_repo().list_for_job(job_id)
+    return [enrich_job_artifact(row, job_row=job_row) for row in rows]
 
 
 def get_job_artifact(job_id: str, artifact_id: str) -> dict | None:
-    conn = get_connection()
-    try:
-        job_row = _job_row_for_lifecycle(conn, job_id)
-        row = conn.execute(
-            """
-            SELECT *
-            FROM job_artifacts
-            WHERE job_id = ? AND artifact_id = ?
-            LIMIT 1
-            """,
-            (job_id, artifact_id),
-        ).fetchone()
-        return enrich_job_artifact(dict(row), job_row=job_row) if row else None
-    finally:
-        conn.close()
+    job_row = _job_repo().get(job_id)
+    row = _artifact_repo().get(job_id, artifact_id)
+    return enrich_job_artifact(row, job_row=job_row) if row else None
 
 
 def artifact_allows_download(artifact: dict | None) -> bool:
@@ -660,19 +579,11 @@ def update_job_artifact_review(
     }
     metadata["listening_review"] = review
 
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
-            UPDATE job_artifacts
-            SET metadata_json = ?
-            WHERE job_id = ? AND artifact_id = ?
-            """,
-            (json.dumps(metadata, ensure_ascii=False), job_id, artifact_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    _artifact_repo().update_artifact_metadata(
+        job_id,
+        artifact_id,
+        json.dumps(metadata, ensure_ascii=False),
+    )
 
     return {
         "job_id": job_id,
@@ -683,52 +594,19 @@ def update_job_artifact_review(
 
 
 def get_final_job_artifact(job_id: str) -> dict | None:
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM job_artifacts
-            WHERE job_id = ? AND is_final = 1
-            ORDER BY
-                CASE
-                    WHEN artifact_type IN ('cover_master', 'train_model_pth') THEN 0
-                    WHEN artifact_type IN ('cover_model', 'train_model_index') THEN 1
-                    ELSE 2
-                END,
-                datetime(created_at) DESC,
-                rowid DESC
-            LIMIT 1
-            """,
-            (job_id,),
-        ).fetchone()
-        if not rows:
-            return None
-        job_row = _job_row_for_lifecycle(conn, job_id)
-        return enrich_job_artifact(dict(rows), job_row=job_row)
-    finally:
-        conn.close()
+    row = _artifact_repo().get_final_job_artifact_prioritized(job_id)
+    if not row:
+        return None
+    job_row = _job_repo().get(job_id)
+    return enrich_job_artifact(row, job_row=job_row)
 
 
 def get_final_cover_job_artifact(job_id: str) -> dict | None:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            """
-            SELECT *
-            FROM job_artifacts
-            WHERE job_id = ? AND is_final = 1 AND artifact_type = 'cover_master'
-            ORDER BY datetime(created_at) DESC, rowid DESC
-            LIMIT 1
-            """,
-            (job_id,),
-        ).fetchone()
-        if not row:
-            return None
-        job_row = _job_row_for_lifecycle(conn, job_id)
-        return enrich_job_artifact(dict(row), job_row=job_row)
-    finally:
-        conn.close()
+    row = _artifact_repo().get_final_cover_master(job_id)
+    if not row:
+        return None
+    job_row = _job_repo().get(job_id)
+    return enrich_job_artifact(row, job_row=job_row)
 
 
 def get_final_cover_artifact_review_contract(job_id: str) -> dict:
@@ -814,19 +692,7 @@ def list_final_cover_review_artifacts(
     limit: int = 50,
 ) -> dict:
     capped_limit = max(1, min(int(limit), 100))
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            """
-            SELECT ja.*, j.track_id
-            FROM job_artifacts ja
-            LEFT JOIN jobs j ON j.job_id = ja.job_id
-            WHERE ja.is_final = 1 AND ja.artifact_type = 'cover_master'
-            ORDER BY datetime(ja.created_at) DESC, ja.rowid DESC
-            """
-        ).fetchall()
-    finally:
-        conn.close()
+    rows = _artifact_repo().list_final_cover_master_with_track()
 
     items: list[dict] = []
     counts = _empty_review_counts()

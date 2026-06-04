@@ -199,3 +199,152 @@ class ArtifactRepository:
             return [dict(r) for r in rows]
         finally:
             self._close_conn(conn)
+
+    def find_audio_asset(
+        self,
+        job_id: str,
+        asset_role: str,
+        file_path: str,
+        dataset_id: str = "",
+    ) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """
+                SELECT asset_id
+                FROM audio_assets
+                WHERE job_id = ? AND COALESCE(dataset_id, '') = COALESCE(?, '') AND asset_role = ? AND file_path = ?
+                LIMIT 1
+                """,
+                (job_id, dataset_id, asset_role, file_path),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            self._close_conn(conn)
+
+    def find_job_artifact(
+        self,
+        job_id: str,
+        stage_name: str,
+        artifact_type: str,
+        file_path: str,
+    ) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """
+                SELECT artifact_id, is_final, metadata_json
+                FROM job_artifacts
+                WHERE job_id = ? AND stage_name = ? AND artifact_type = ? AND file_path = ?
+                LIMIT 1
+                """,
+                (job_id, stage_name, artifact_type, file_path),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            self._close_conn(conn)
+
+    def update_artifact_metadata(self, job_id: str, artifact_id: str, metadata_json: str) -> None:
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """
+                UPDATE job_artifacts
+                SET metadata_json = ?
+                WHERE job_id = ? AND artifact_id = ?
+                """,
+                (metadata_json, job_id, artifact_id),
+            )
+            conn.commit()
+        finally:
+            self._close_conn(conn)
+
+    def patch_job_artifact(
+        self,
+        artifact_id: str,
+        *,
+        file_size: int | None = None,
+        is_final: bool | None = None,
+        metadata_json: str | None = None,
+    ) -> None:
+        """Partial update used by asset_service register path."""
+        sets: list[str] = []
+        params: list[Any] = []
+        if file_size is not None:
+            sets.append("file_size = ?")
+            params.append(file_size)
+        if is_final is not None:
+            sets.append("is_final = CASE WHEN is_final = 1 OR ? = 1 THEN 1 ELSE 0 END")
+            params.append(1 if is_final else 0)
+        if metadata_json is not None:
+            sets.append("metadata_json = ?")
+            params.append(metadata_json)
+        if not sets:
+            return
+        params.append(artifact_id)
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                f"UPDATE job_artifacts SET {', '.join(sets)} WHERE artifact_id = ?",
+                params,
+            )
+            conn.commit()
+        finally:
+            self._close_conn(conn)
+
+    def get_final_job_artifact_prioritized(self, job_id: str) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM job_artifacts
+                WHERE job_id = ? AND is_final = 1
+                ORDER BY
+                    CASE
+                        WHEN artifact_type IN ('cover_master', 'train_model_pth') THEN 0
+                        WHEN artifact_type IN ('cover_model', 'train_model_index') THEN 1
+                        ELSE 2
+                    END,
+                    datetime(created_at) DESC,
+                    rowid DESC
+                LIMIT 1
+                """,
+                (job_id,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            self._close_conn(conn)
+
+    def get_final_cover_master(self, job_id: str) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM job_artifacts
+                WHERE job_id = ? AND is_final = 1 AND artifact_type = 'cover_master'
+                ORDER BY datetime(created_at) DESC, rowid DESC
+                LIMIT 1
+                """,
+                (job_id,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            self._close_conn(conn)
+
+    def list_final_cover_master_with_track(self) -> list[dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT ja.*, j.track_id
+                FROM job_artifacts ja
+                LEFT JOIN jobs j ON j.job_id = ja.job_id
+                WHERE ja.is_final = 1 AND ja.artifact_type = 'cover_master'
+                ORDER BY datetime(ja.created_at) DESC, ja.rowid DESC
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            self._close_conn(conn)
