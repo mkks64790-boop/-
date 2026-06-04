@@ -7,6 +7,7 @@ Does not call ``register_job_artifact`` in this stage (physical file required).
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from backend.services.stage59_artifact_persistence_service import (
@@ -50,6 +51,12 @@ def build_job_artifact_promotion_plan(
             item_blocked.append("metadata_only_not_promotable")
         if not exists:
             item_blocked.append("file_missing_at_planned_path")
+        if exists:
+            try:
+                if os.path.getsize(resolved) == 0:
+                    item_blocked.append("file_empty")
+            except Exception:
+                pass
         if record.get("lifecycle_state") != "transient":
             item_blocked.append("only_transient_promotable_in_smoke")
         if artifact_type not in UVR_ARTIFACT_KINDS:
@@ -102,3 +109,35 @@ def build_job_artifact_promotion_plan(
         "requires_later_db_integration": True,
         "register_requires_physical_file": REGISTER_REQUIRES_PHYSICAL_FILE,
     }
+
+
+def promote_file_backed_uvr_artifacts(
+    *,
+    job_id: str | None,
+    artifact_contract: dict[str, Any],
+    file_paths: dict[str, str] | None = None,
+    project_root: Path | str | None = None,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """
+    Entry point for file-backed UVR artifact promotion into job_artifacts.
+    In governance/safety stages this returns a plan and does not perform DB writes.
+    When dry_run=False and preflight passes, a future implementation may call
+    asset_service.register_job_artifact for each promotable stem (requires explicit
+    human approval + real runner enablement outside this sprint).
+    """
+    from pathlib import Path as _Path
+
+    plan = build_job_artifact_promotion_plan(
+        job_id=job_id,
+        artifact_contract=artifact_contract,
+        file_paths=file_paths,
+    )
+    # Attach extra context for callers.
+    plan = dict(plan)
+    plan["promote_file_backed_called"] = True
+    plan["dry_run"] = bool(dry_run)
+    plan["project_root"] = str(project_root) if project_root else None
+    # Real promotion (register) is intentionally not executed here per Stage59C/60 invariants.
+    plan["db_write_performed"] = False
+    return plan

@@ -4,11 +4,11 @@ Stage59C-4a — job artifact promotion dry plan tests.
 
 from __future__ import annotations
 
-from backend.services.stage59_artifact_persistence_service import (
+from backend.services.artifact_lifecycle_service import (
     build_mock_uvr_artifact_contracts,
     build_run_persistence_bundle,
 )
-from backend.services.stage59_job_artifact_promotion_service import (
+from backend.services.artifact_lifecycle_service import (
     build_job_artifact_promotion_plan,
 )
 

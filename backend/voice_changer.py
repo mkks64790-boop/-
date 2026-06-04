@@ -16,6 +16,29 @@ import requests
 from gradio_client import Client
 from gradio_client.exceptions import AppError
 
+try:
+    from .engine_paths import (
+        PROJECT_ROOT as ENGINE_PROJECT_ROOT,
+        RVC_API_BASE,
+        RVC_FALLBACK_BASES,
+        RVC_INDEX_ROOT,
+        RVC_WEBUI_BACKUP_DIR,
+        RVC_WEBUI_DIR,
+        RVC_WEIGHT_ROOT,
+        rvc_engine_paths,
+    )
+except ImportError:
+    from engine_paths import (
+        PROJECT_ROOT as ENGINE_PROJECT_ROOT,
+        RVC_API_BASE,
+        RVC_FALLBACK_BASES,
+        RVC_INDEX_ROOT,
+        RVC_WEBUI_BACKUP_DIR,
+        RVC_WEBUI_DIR,
+        RVC_WEIGHT_ROOT,
+        rvc_engine_paths,
+    )
+
 
 def _pick_first_existing(*paths: str) -> str:
     for path in paths:
@@ -24,22 +47,34 @@ def _pick_first_existing(*paths: str) -> str:
     return paths[0] if paths else ""
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = str(ENGINE_PROJECT_ROOT)
 OUTPUT_ROOT = os.path.join(PROJECT_ROOT, "shared_data", "outputs")
 
-RVC_WEBUI_DIR = os.environ.get("FEISHARK_RVC_DIR") or _pick_first_existing(
+_LEGACY_RVC_WEBUI_DIR_CANDIDATES = (
+    os.path.join(PROJECT_ROOT, "external", "rvc-webui"),
+    os.path.join(PROJECT_ROOT, "external", "rvc"),
     r"D:\RVC\RVCv2",
     r"D:\RVC\RVC",
     r"C:\Users\ASUS\WorkBuddy\20260427153731\RVC-WebUI",
 )
-RVC_WEIGHT_ROOT = os.path.join(RVC_WEBUI_DIR, "assets", "weights")
-RVC_INDEX_ROOT = os.path.join(RVC_WEBUI_DIR, "assets", "indices")
+_LEGACY_RVC_WEBUI_BACKUP_DIR_CANDIDATES = (
+    os.path.join(PROJECT_ROOT, "external", "rvc-webui-backup"),
+    os.path.join(PROJECT_ROOT, "external", "rvc-qiufeng"),
+    "",
+)
+RVC_WEIGHT_ROOT = RVC_WEIGHT_ROOT
+RVC_INDEX_ROOT = RVC_INDEX_ROOT
 
-RVC_API_BASE = os.environ.get("FEISHARK_RVC_API", "").strip()
-RVC_FALLBACK_BASES = [
+RVC_API_BASE = RVC_API_BASE
+_LEGACY_RVC_FALLBACK_BASES = [
     "http://127.0.0.1:7866",
     "http://127.0.0.1:7865",
 ]
+# Support for backup RVC (e.g. 秋风RVC enabled in studio as backup)
+# If FEISHARK_RVC_BACKUP_DIR is set or external/rvc-webui-backup exists, launcher can start second instance on 7865
+if RVC_WEBUI_BACKUP_DIR and os.path.isdir(RVC_WEBUI_BACKUP_DIR):
+    # backup instance expected on secondary port
+    pass
 ENGINE_KIND = "rvc_webui_local"
 COVER_INFERENCE_MODE = "webui_api_local_compat"
 TRAIN_BACKEND_MODE = "local_rvc_scripts"
@@ -103,6 +138,25 @@ def transform_voice(
     print(f"[变声] 索引: {index_path or '(未提供)'}")
     print(f"[变声] 变调: {default_pitch}")
 
+    # Support for 秋风RVC as backup (per user setup and bundling plan)
+    model_name = str(asset.get("model_name", ""))
+    origin = str(asset.get("origin_kind", "")).lower()
+    use_backup = "backup" in origin or "秋风" in model_name.lower() or "qiufeng" in model_name.lower()
+    if use_backup:
+        try:
+            engine = rvc_engine_paths("backup")
+            # override for this call
+            local_rvc_dir = engine["root"]
+            local_weights = engine["weights"]
+            local_base = engine["base_url"]
+            print(f"[变声] 使用备份 RVC 实例 (秋风RVC) at {local_base}")
+        except Exception:
+            local_rvc_dir = RVC_WEBUI_BACKUP_DIR
+            local_base = None
+    else:
+        local_rvc_dir = RVC_WEBUI_DIR
+        local_base = None
+
     if not os.path.exists(fixed_vocal_path):
         err = f"修音后干声不存在: {fixed_vocal_path}"
         print(f"[变声] {err}")
@@ -115,7 +169,7 @@ def transform_voice(
         update_task_status(task_id, STATUS_FAILED, err)
         return {"success": False, "error": err}
 
-    base_url = _discover_rvc_base_url()
+    base_url = local_base or _discover_rvc_base_url()
     if not base_url:
         err = (
             "RVC 服务未在线，请先启动 RVC WebUI。"
@@ -126,8 +180,10 @@ def transform_voice(
         return {"success": False, "error": err}
 
     try:
-        model_name = _sync_weight_to_rvc_runtime(pth_path)
-        synced_index_path = _sync_index_to_rvc_runtime(index_path)
+        # use backup root for sync if 秋风 backup model
+        sync_root = local_rvc_dir if use_backup and local_rvc_dir else None
+        model_name = _sync_weight_to_rvc_runtime(pth_path, root=sync_root)
+        synced_index_path = _sync_index_to_rvc_runtime(index_path, root=sync_root)
         client = Client(base_url, verbose=False)
     except Exception as exc:
         err = f"RVC 运行目录准备失败: {exc}"
@@ -258,13 +314,15 @@ def _refresh_rvc_choices(client: Client):
     return client.predict(api_name="/infer_refresh")
 
 
-def _sync_weight_to_rvc_runtime(source_path: str) -> str:
-    if not RVC_WEBUI_DIR:
+def _sync_weight_to_rvc_runtime(source_path: str, *, root: str = None) -> str:
+    root = root or RVC_WEBUI_DIR
+    if not root:
         raise FileNotFoundError("未找到 RVC WebUI 目录")
 
-    os.makedirs(RVC_WEIGHT_ROOT, exist_ok=True)
+    weight_root = os.path.join(root, "assets", "weights") if root else ""
+    os.makedirs(weight_root, exist_ok=True)
     model_name = os.path.basename(source_path)
-    target_path = os.path.join(RVC_WEIGHT_ROOT, model_name)
+    target_path = os.path.join(weight_root, model_name)
 
     if (
         os.path.abspath(source_path) != os.path.abspath(target_path)
@@ -276,12 +334,14 @@ def _sync_weight_to_rvc_runtime(source_path: str) -> str:
     return model_name
 
 
-def _sync_index_to_rvc_runtime(source_path: str) -> str:
+def _sync_index_to_rvc_runtime(source_path: str, *, root: str = None) -> str:
     if not source_path or not os.path.exists(source_path):
         return ""
 
-    os.makedirs(RVC_INDEX_ROOT, exist_ok=True)
-    target_path = os.path.join(RVC_INDEX_ROOT, os.path.basename(source_path))
+    root = root or RVC_WEBUI_DIR
+    index_root = os.path.join(root, "assets", "indices") if root else ""
+    os.makedirs(index_root, exist_ok=True)
+    target_path = os.path.join(index_root, os.path.basename(source_path))
 
     if (
         os.path.abspath(source_path) != os.path.abspath(target_path)

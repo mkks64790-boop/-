@@ -95,10 +95,17 @@ def test_rvc_models_paging_search_filters_and_import_rvc(client, isolated_backen
             "pth_path": str(alpha_pth),
             "index_path": str(alpha_index),
             "default_pitch": 0,
+            "engine_key": "rvc_webui_backup",
+            "rvc_root": str(rvc_root),
+            "rvc_base_url": "http://127.0.0.1:7865",
         },
     )
     assert imported.status_code == 200
     assert imported.json()["ok"] is True
+    imported_model = imported.json()["model"]
+    assert imported_model["origin_kind"] == "external_rvc_backup"
+    assert imported_model["metadata"]["engine_key"] == "rvc_webui_backup"
+    assert imported_model["metadata"]["rvc_base_url"] == "http://127.0.0.1:7865"
 
     duplicate = client.post(
         "/api/models/import-rvc",

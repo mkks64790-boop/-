@@ -331,7 +331,7 @@ def evaluate_uvr_ab_readiness(
     check_file_exists: bool = True,
 ) -> dict[str, Any]:
     """Stage59C-1 readiness harness — mock metadata plan; real runner blocked."""
-    from backend.services.stage59_uvr_runner_contract import (
+    from backend.services.uvr_smoke_service import (
         STAGE59C1_REAL_EXECUTE_BLOCKED,
         evaluate_runner_readiness_from_paths,
     )

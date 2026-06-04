@@ -4,7 +4,7 @@ Stage59C-2 — Stage49-compatible listening bridge contract tests.
 
 from __future__ import annotations
 
-from backend.services.stage59_listening_bridge_service import (
+from backend.services.artifact_lifecycle_service import (
     LISTENING_BRIDGE_SCHEMA,
     STAGE49_COMPATIBLE_SCHEMA,
     build_listening_contract,

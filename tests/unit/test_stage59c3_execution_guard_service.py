@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.services.stage59_execution_guard_service import (
+from backend.services.execution_safety_service import (
     MAX_ITEMS,
     evaluate_execution_guards,
     plan_sandbox,
@@ -16,6 +16,12 @@ def test_validate_caps_rejects_max_items_gt_one():
     result = validate_caps(max_items=2, clip_seconds=45)
     assert result["caps_ok"] is False
     assert f"max_items_must_be_{MAX_ITEMS}" in result["errors"][0]
+
+
+def test_validate_caps_rejects_invalid_max_items_without_exception():
+    result = validate_caps(max_items="not-a-number", clip_seconds=45)
+    assert result["caps_ok"] is False
+    assert "max_items_invalid" in result["errors"]
 
 
 def test_validate_caps_rejects_clip_out_of_range():

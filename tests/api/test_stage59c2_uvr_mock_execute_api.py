@@ -9,7 +9,7 @@ from pathlib import Path
 
 from backend.services.short_chain_manifest_service import SCHEMA_VERSION
 from backend.services.short_chain_uvr_service import STAGE59C0_EXECUTE_BLOCK_REASON
-from backend.services.stage59_transient_artifact_service import clear_transient_store
+from backend.services.artifact_lifecycle_service import clear_transient_store
 
 
 def _repo_root() -> Path:

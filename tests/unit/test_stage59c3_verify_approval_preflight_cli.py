@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.services.stage59_approval_audit_service import clear_audit_store
-from backend.services.stage59_execution_policy_service import REAL_RUNNER_NOT_ENABLED_REASON
+from backend.services.execution_safety_service import clear_audit_store
+from backend.services.execution_safety_service import REAL_RUNNER_NOT_ENABLED_REASON
 from backend.verify_stage59_uvr_ab import main as verify_main
 
 

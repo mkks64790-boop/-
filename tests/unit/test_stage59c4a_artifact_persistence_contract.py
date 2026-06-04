@@ -4,7 +4,8 @@ Stage59C-4a — artifact persistence contract unit tests.
 
 from __future__ import annotations
 
-from backend.services.stage59_artifact_persistence_service import (
+from backend.services.artifact_lifecycle_service import (
+    build_artifact_contract_record,
     build_mock_uvr_artifact_contracts,
     clear_persistence_store,
     stable_artifact_id,
@@ -43,3 +44,16 @@ def test_validator_rejects_active_lifecycle():
     record["lifecycle_state"] = "active"
     errors = validate_artifact_contract_record(record)
     assert "mock_smoke_must_not_be_active" in errors
+
+
+def test_validator_requires_exact_run_id_directory_segment():
+    record = build_artifact_contract_record(
+        run_id="run",
+        entry_id="entry",
+        artifact_type="uvr_vocal",
+    )
+    record["planned_path"] = "shared_data/stage59_runtime/run_evil/uvr_vocal.wav"
+
+    errors = validate_artifact_contract_record(record)
+
+    assert "path_run_id_mismatch" in errors

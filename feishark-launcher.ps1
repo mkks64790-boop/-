@@ -51,7 +51,10 @@ $rvcUrl = "http://127.0.0.1:$rvcPort"
 
 $rvcDir = $env:FEISHARK_RVC_DIR
 if (-not $rvcDir) {
+    $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
     foreach ($candidate in @(
+        (Join-Path $projectRoot "external\rvc-webui"),
+        (Join-Path $projectRoot "external\rvc"),
         "D:\RVC\RVCv2",
         "D:\RVC\RVC",
         "C:\Users\ASUS\WorkBuddy\20260427153731\RVC-WebUI"
@@ -66,9 +69,9 @@ if (-not $rvcDir) {
 $rvcPython = $env:FEISHARK_RVC_PYTHON
 if (-not $rvcPython) {
     foreach ($candidate in @(
-        "D:\Miniconda3\envs\rvc\python.exe",
         $(if ($rvcDir) { Join-Path $rvcDir "runtime\python.exe" }),
-        $(if ($rvcDir) { Join-Path $rvcDir "venv\Scripts\python.exe" })
+        $(if ($rvcDir) { Join-Path $rvcDir "venv\Scripts\python.exe" }),
+        "D:\Miniconda3\envs\rvc\python.exe"
     )) {
         if ($candidate -and (Test-Path $candidate)) {
             $rvcPython = $candidate
@@ -126,6 +129,58 @@ if (Test-HttpUrl -Url "$rvcUrl/gradio_api/info") {
     }
 } else {
     Write-Host "RVC WebUI not found. Skip RVC startup."
+}
+Write-Host ""
+
+# --- Backup RVC for 秋风RVC (as enabled in FeiShark Studio) ---
+$backupRvcPort = if ($env:FEISHARK_RVC_BACKUP_PORT) { [int]$env:FEISHARK_RVC_BACKUP_PORT } else { 7865 }
+$backupRvcUrl = "http://127.0.0.1:$backupRvcPort"
+$backupRvcDir = $env:FEISHARK_RVC_BACKUP_DIR
+if (-not $backupRvcDir) {
+    $backupRvcDir = Join-Path $projectRoot "external\rvc-webui-backup"
+    if (-not (Test-Path (Join-Path $backupRvcDir "infer-web.py"))) {
+        $backupRvcDir = Join-Path $projectRoot "external\rvc-qiufeng"
+        if (-not (Test-Path (Join-Path $backupRvcDir "infer-web.py"))) {
+            $backupRvcDir = $null
+        }
+    }
+}
+$backupRvcPython = $env:FEISHARK_RVC_BACKUP_PYTHON
+if (-not $backupRvcPython -and $backupRvcDir) {
+    foreach ($candidate in @(
+        $(if ($backupRvcDir) { Join-Path $backupRvcDir "runtime\python.exe" }),
+        $(if ($backupRvcDir) { Join-Path $backupRvcDir "venv\Scripts\python.exe" }),
+        "D:\Miniconda3\envs\rvc\python.exe"
+    )) {
+        if ($candidate -and (Test-Path $candidate)) {
+            $backupRvcPython = $candidate
+            break
+        }
+    }
+}
+if ($backupRvcDir -and (Test-Path (Join-Path $backupRvcDir "infer-web.py"))) {
+    if (Test-HttpUrl -Url "$backupRvcUrl/gradio_api/info") {
+        Write-Host ("Backup RVC (秋风RVC) already running at {0}" -f $backupRvcUrl)
+    } else {
+        Write-Host ("Starting backup RVC (for 秋风RVC backup in studio) at {0}" -f $backupRvcUrl)
+        Start-Process `
+            -WindowStyle Hidden `
+            -FilePath $(if ($backupRvcPython) { $backupRvcPython } else { "python" }) `
+            -WorkingDirectory $backupRvcDir `
+            -ArgumentList @("infer-web.py", "--pycmd", $(if ($backupRvcPython) { $backupRvcPython } else { "python" }), "--port", "$backupRvcPort", "--noautoopen") `
+            -RedirectStandardOutput (Join-Path $logDir "rvc-backup.stdout.log") `
+            -RedirectStandardError (Join-Path $logDir "rvc-backup.stderr.log")
+        if (Wait-HttpUrl -Url "$backupRvcUrl/gradio_api/info" -TimeoutSeconds 60 -IntervalSeconds 2) {
+            Write-Host "Backup RVC ready"
+        } else {
+            Write-Host "Backup RVC start timeout (秋风RVC may need manual start or model load in webui)"
+        }
+    }
+    $env:FEISHARK_RVC_BACKUP_DIR = $backupRvcDir
+    $env:FEISHARK_RVC_BACKUP_PORT = "$backupRvcPort"
+    $env:FEISHARK_RVC_BACKUP_API = $backupRvcUrl
+} else {
+    Write-Host "Backup RVC dir not found in workspace/external or env. 秋风RVC backup in studio will use main or manual instance."
 }
 Write-Host ""
 

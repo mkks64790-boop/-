@@ -33,16 +33,28 @@ def planned_sandbox_path(run_id: str, artifact_type: str) -> str:
     return (STAGE_RUNTIME_REL / safe_run / f"{artifact_type}.wav").as_posix()
 
 
+def safe_runtime_run_id(run_id: str) -> str:
+    """Sanitize run_id for filesystem paths under shared_data/stage59_runtime/."""
+    if not run_id:
+        return "run"
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(run_id))[:128]
+
+
 def _validate_planned_path_under_sandbox(planned_path: str, run_id: str) -> list[str]:
     errors: list[str] = []
     norm = planned_path.replace("\\", "/")
-    prefix = f"shared_data/stage59_runtime/{run_id}"
-    safe_prefix = f"shared_data/stage59_runtime/{''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in run_id)[:128]}"
+    safe_run = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(run_id))[:128]
+    expected_segment = safe_run or "stage59_run"
     if ".." in norm:
         errors.append("path_traversal_forbidden")
-    if not norm.startswith("shared_data/stage59_runtime/"):
+    if "shared_data/stage59_runtime/" not in norm:
         errors.append("path_outside_stage59_runtime")
-    if safe_prefix not in norm and prefix not in norm:
+        return errors
+    # Extract the exact directory segment after stage59_runtime/ (support absolute paths from file-backed writes)
+    idx = norm.find("shared_data/stage59_runtime/") + len("shared_data/stage59_runtime/")
+    rest = norm[idx:]
+    segment = rest.split("/", 1)[0] if "/" in rest else rest
+    if segment != expected_segment:
         errors.append("path_run_id_mismatch")
     return errors
 
@@ -101,6 +113,55 @@ def build_mock_uvr_artifact_contracts(
         if errors:
             record["contract_validation_errors"] = errors
         records.append(record)
+    return records
+
+
+def build_file_backed_uvr_artifact_contracts(
+    *,
+    run_id: str,
+    entry_id: str,
+    file_paths: dict[str, str],
+    project_root: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Build artifact contracts when real UVR stem files have been written to disk
+    (file-backed, not mock). Used by real-smoke promotion planning.
+    Sets file_exists=True / metadata_only=False only for provided existing non-empty files.
+    """
+    from pathlib import Path as _Path  # local alias to avoid shadowing
+    root = _Path(project_root) if project_root else Path.cwd()
+    records: list[dict[str, Any]] = []
+    for kind in sorted(UVR_ARTIFACT_KINDS):
+        provided = file_paths.get(kind) if file_paths else None
+        resolved: str | None = None
+        file_exists = False
+        if provided:
+            p = _Path(provided)
+            if not p.is_absolute():
+                p = root / p
+            resolved = str(p)
+            if p.exists():
+                try:
+                    file_exists = p.stat().st_size > 0
+                except Exception:
+                    file_exists = False
+        rec = build_artifact_contract_record(
+            run_id=run_id,
+            entry_id=entry_id,
+            artifact_type=kind,
+            metadata_only=not file_exists,
+            file_exists=file_exists,
+        )
+        if resolved:
+            # Prefer the actual written path for downstream resolution in promotion.
+            rec = dict(rec)
+            rec["planned_path"] = resolved
+            rec["resolved_path"] = resolved
+        errors = validate_artifact_contract_record(rec)
+        if errors:
+            rec = dict(rec)
+            rec["contract_validation_errors"] = errors
+        records.append(rec)
     return records
 
 

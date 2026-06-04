@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from backend.services.short_chain_manifest_service import SCHEMA_VERSION
-from backend.services.stage59_approval_audit_service import clear_audit_store
-from backend.services.stage59_execution_policy_service import (
+from backend.services.execution_safety_service import clear_audit_store
+from backend.services.execution_safety_service import (
     REAL_RUNNER_NOT_ENABLED_REASON,
     evaluate_execution_policy,
 )

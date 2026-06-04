@@ -7,8 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from backend.services.short_chain_uvr_service import STAGE59C0_EXECUTE_BLOCK_REASON
-from backend.services.stage59_execution_policy_service import REAL_RUNNER_NOT_ENABLED_REASON
-from backend.services.stage59_transient_artifact_service import clear_transient_store
+from backend.services.execution_safety_service import REAL_RUNNER_NOT_ENABLED_REASON
+from backend.services.artifact_lifecycle_service import clear_transient_store
 
 
 def _repo_root() -> Path:

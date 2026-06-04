@@ -4,8 +4,8 @@ Stage59C-4a — listening bridge stable artifact ref tests.
 
 from __future__ import annotations
 
-from backend.services.stage59_artifact_persistence_service import build_mock_uvr_artifact_contracts
-from backend.services.stage59_listening_bridge_service import build_listening_contract
+from backend.services.artifact_lifecycle_service import build_mock_uvr_artifact_contracts
+from backend.services.artifact_lifecycle_service import build_listening_contract
 
 
 def test_listening_bridge_uses_artifact_refs_not_only_paths():

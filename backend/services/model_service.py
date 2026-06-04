@@ -18,6 +18,14 @@ ORIGIN_LABELS = {
     "rescanned_local": "目录扫描",
 }
 
+ORIGIN_LABELS.update(
+    {
+        "external_rvc_primary": "Primary RVC WebUI",
+        "external_rvc_backup": "Backup RVC WebUI",
+    }
+)
+
+
 STRATEGY_LABELS = {
     "single_long_preprocess": "单文件快速训练",
     "multi_clean_direct": "多文件精训",
@@ -485,6 +493,12 @@ def list_models(
             "index_path": enriched.get("index_path") or "",
             "resolved_index_path": enriched.get("resolved_index_path") or "",
             "origin_kind": enriched.get("origin_kind") or "",
+            "engine_key": (enriched.get("metadata") or {}).get("engine_key") or "",
+            "source_engine": (enriched.get("metadata") or {}).get("source_engine") or "",
+            "rvc_root": (enriched.get("metadata") or {}).get("rvc_root") or "",
+            "rvc_base_url": (enriched.get("metadata") or {}).get("rvc_base_url") or "",
+            "source_pth_path": (enriched.get("metadata") or {}).get("source_pth_path") or "",
+            "source_index_path": (enriched.get("metadata") or {}).get("source_index_path") or "",
             "source_job_id": enriched.get("source_job_id") or "",
             "source_strategy_key": enriched.get("source_strategy_key") or "",
             "source_dataset_id": enriched.get("source_dataset_id") or "",
@@ -538,6 +552,7 @@ def import_voice_model(
     weights_dir: str = "",
     *,
     origin_kind: str = "imported_external",
+    metadata_extra: dict | None = None,
 ) -> dict:
     conn = get_connection()
     try:
@@ -558,10 +573,12 @@ def import_voice_model(
     stored_index = _normalize_path(index_path, project_root) if project_root else index_path
     metadata = {
         "origin_kind": origin_kind,
-        "imported": origin_kind == "imported_external",
+        "imported": origin_kind in {"imported_external", "external_rvc_primary", "external_rvc_backup"},
         "rescanned": origin_kind == "rescanned_local",
         "source_summary": _build_source_summary(origin_kind),
     }
+    if metadata_extra:
+        metadata.update({key: value for key, value in metadata_extra.items() if value not in (None, "")})
     upsert_voice_model(
         voice_model_id=model_id,
         legacy_model_id=model_id,

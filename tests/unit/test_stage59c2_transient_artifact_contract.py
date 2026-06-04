@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.services.stage59_transient_artifact_service import (
+from backend.services.artifact_lifecycle_service import (
     REQUIRES_LATER_DB_INTEGRATION,
     clear_transient_store,
     get_transient_run,

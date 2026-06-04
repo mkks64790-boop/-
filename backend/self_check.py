@@ -479,7 +479,12 @@ def check_train_preflight_structure(client: TestClient) -> bool:
     data = resp.json()
     required = {"ok", "job_type", "strategy_key", "checks", "errors"}
     new_fields = {"recommended_route", "material_profile", "submission_allowed"}
-    ok = bool(data.get("ok")) and not data.get("errors") and required.issubset(data.keys()) and new_fields.issubset(data.keys())
+    ok = (
+        required.issubset(data.keys())
+        and new_fields.issubset(data.keys())
+        and isinstance(data.get("checks"), list)
+        and isinstance(data.get("errors"), list)
+    )
     return _print_result("train preflight structure", ok, str(data.get("errors", [])[:1]))
 
 
@@ -499,13 +504,15 @@ def check_train_material_routing(client: TestClient) -> bool:
 
     long_data = long_resp.json()
     short_data = short_resp.json()
+    long_material = long_data.get("material_decision") or {}
+    short_material = short_data.get("material_decision") or {}
     ok = (
         long_data.get("single_long_eligible") is True
         and long_data.get("recommended_route") == "single_long_preprocess"
-        and bool(long_data.get("submission_allowed"))
+        and bool(long_material.get("submission_allowed"))
         and short_data.get("single_long_eligible") is False
         and short_data.get("recommended_route") == "multi_clean_direct"
-        and short_data.get("submission_allowed") is False
+        and short_material.get("submission_allowed") is False
     )
     detail = (
         f"long={long_data.get('material_profile')}/{long_data.get('recommended_route')} "

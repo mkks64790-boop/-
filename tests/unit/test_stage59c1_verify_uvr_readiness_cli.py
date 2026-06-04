@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.services.stage59_uvr_runner_contract import REAL_RUNNER_BLOCKED_REASON
+from backend.services.uvr_smoke_service import REAL_RUNNER_BLOCKED_REASON
 from backend.verify_stage59_uvr_ab import main as verify_main
 
 

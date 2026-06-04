@@ -170,16 +170,19 @@ try:
         evaluate_uvr_ab_readiness,
         plan_short_chain_uvr,
     )
-    from .services.stage59_listening_bridge_service import get_listening_contract_for_run
-    from .services.stage59_transient_artifact_service import (
+    from .services.artifact_lifecycle_service import (
+        get_listening_contract_for_run,
         get_artifact_contract_for_run,
         get_transient_run,
     )
-    from .services.stage59_execution_policy_service import (
+    from .services.execution_safety_service import (
         REAL_RUNNER_NOT_ENABLED_REASON,
         evaluate_execution_policy,
     )
-    from .services.stage59_uvr_mock_execute_service import mock_execute_uvr_ab
+    from .services.uvr_smoke_service import (
+        evaluate_real_smoke_plan,
+        mock_execute_uvr_ab,
+    )
     from .strategies.strategy_registry import resolve_train_strategy
 except ImportError:
     from db import (
@@ -306,16 +309,19 @@ except ImportError:
         evaluate_uvr_ab_readiness,
         plan_short_chain_uvr,
     )
-    from services.stage59_listening_bridge_service import get_listening_contract_for_run
-    from services.stage59_transient_artifact_service import (
+    from services.artifact_lifecycle_service import (
+        get_listening_contract_for_run,
         get_artifact_contract_for_run,
         get_transient_run,
     )
-    from services.stage59_execution_policy_service import (
+    from services.execution_safety_service import (
         REAL_RUNNER_NOT_ENABLED_REASON,
         evaluate_execution_policy,
     )
-    from services.stage59_uvr_mock_execute_service import mock_execute_uvr_ab
+    from services.uvr_smoke_service import (
+        evaluate_real_smoke_plan,
+        mock_execute_uvr_ab,
+    )
     from strategies.strategy_registry import resolve_train_strategy
 
 
@@ -788,6 +794,17 @@ class Stage59UvrAbApprovalPreflightRequest(BaseModel):
     max_items: int = 1
 
 
+class Stage59UvrAbRealSmokePlanRequest(BaseModel):
+    entry_id: str
+    manifest_path: str | None = None
+    skip_file_exists: bool = False
+    clip_seconds: int = 45
+    confirm_execute: bool = False
+    approval_token: str | None = None
+    max_items: int = 1
+    run_id: str | None = None
+
+
 class TrainingRecoveryRegisterRequest(BaseModel):
     exp_name: str
     model_name: str
@@ -800,6 +817,37 @@ class ModelImportRvcRequest(BaseModel):
     index_path: str = ""
     model_name: str = ""
     default_pitch: int = 0
+    origin_kind: str = ""
+    engine_key: str = ""
+    rvc_root: str = ""
+    rvc_base_url: str = ""
+    source_pth_path: str = ""
+    source_index_path: str = ""
+
+
+def _model_import_origin_kind(payload: ModelImportRvcRequest) -> str:
+    requested = (payload.origin_kind or "").strip()
+    if requested:
+        return requested
+    engine_key = (payload.engine_key or "").strip().lower()
+    if engine_key in {"rvc_webui_backup", "rvc_backup", "rvc_qiufeng", "qiufeng"}:
+        return "external_rvc_backup"
+    if engine_key in {"rvc_webui", "rvc", "primary"}:
+        return "external_rvc_primary"
+    return "imported_external"
+
+
+def _model_import_metadata(payload: ModelImportRvcRequest, pth_path: str, index_path: str) -> dict:
+    engine_key = (payload.engine_key or "").strip()
+    metadata = {
+        "engine_key": engine_key,
+        "source_engine": engine_key,
+        "rvc_root": (payload.rvc_root or "").strip(),
+        "rvc_base_url": (payload.rvc_base_url or "").strip(),
+        "source_pth_path": (payload.source_pth_path or pth_path or "").strip(),
+        "source_index_path": (payload.source_index_path or index_path or "").strip(),
+    }
+    return {key: value for key, value in metadata.items() if value}
 
 
 class TrainingEstimateRequest(BaseModel):
@@ -1680,7 +1728,8 @@ async def post_model_import_rvc(payload: ModelImportRvcRequest):
         default_pitch=payload.default_pitch,
         project_root=PROJECT_ROOT,
         weights_dir=WEIGHTS_DIR,
-        origin_kind="imported_external",
+        origin_kind=_model_import_origin_kind(payload),
+        metadata_extra=_model_import_metadata(payload, pth_path, index_path),
     )
     return {
         "ok": True,
@@ -1723,6 +1772,7 @@ async def get_engine_rvc_models(
     q: str = "",
     registered: str = "all",
     has_index: str = "all",
+    engine_key: str = "rvc_webui",
     force: bool = False,
 ):
     return list_rvc_models(
@@ -1733,6 +1783,7 @@ async def get_engine_rvc_models(
         q=q,
         registered=registered,
         has_index=has_index,
+        engine_key=engine_key,
         force=force,
     )
 
@@ -1830,11 +1881,13 @@ async def get_stage59_uvr_ab_contract():
             "readiness",
             "mock_execute",
             "approval_preflight",
+            "real_smoke_plan",
             "real_execute",
         ],
         "readiness_supported": True,
         "mock_execute_supported": True,
         "approval_preflight_supported": True,
+        "real_smoke_plan_supported": True,
         "execute_allowed": False,
         "real_execute_allowed": False,
         "execute_block_reason": STAGE59C0_EXECUTE_BLOCK_REASON,
@@ -1868,6 +1921,10 @@ async def get_stage59_uvr_ab_contract():
         "approval_preflight_cli": (
             "python backend\\verify_stage59_uvr_ab.py --approval-preflight --entry-id <id> "
             "--manifest <allowed-path> --skip-file-exists"
+        ),
+        "real_smoke_plan_cli": (
+            "python backend\\verify_stage59_uvr_ab.py --real-smoke-plan --entry-id <id> "
+            "--manifest <allowed-path> --confirm-execute --approval-token stage59-local-approval"
         ),
     }
 
@@ -2038,6 +2095,32 @@ async def post_stage59_uvr_ab_approval_preflight(payload: Stage59UvrAbApprovalPr
                 "real_execute_allowed": False,
             },
         )
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result)
+    result["real_execute_allowed"] = False
+    return result
+
+
+@app.post(
+    "/api/stage59/short-chain/uvr-ab/real-smoke-plan",
+    summary="Stage59C-4b real UVR smoke plan (plan only, no execution)",
+)
+async def post_stage59_uvr_ab_real_smoke_plan(payload: Stage59UvrAbRealSmokePlanRequest):
+    from pathlib import Path
+
+    root = Path(PROJECT_ROOT)
+    manifest = _resolve_stage59_manifest_or_400(payload.manifest_path)
+    result = evaluate_real_smoke_plan(
+        payload.entry_id,
+        manifest_path=manifest,
+        project_root=root,
+        clip_seconds=payload.clip_seconds,
+        check_file_exists=not payload.skip_file_exists,
+        confirm_execute=payload.confirm_execute,
+        approval_token=payload.approval_token,
+        max_items=payload.max_items,
+        run_id=payload.run_id,
+    )
     if not result.get("ok"):
         raise HTTPException(status_code=422, detail=result)
     result["real_execute_allowed"] = False

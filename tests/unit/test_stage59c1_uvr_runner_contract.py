@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from backend.services.short_chain_manifest_service import SCHEMA_VERSION
-from backend.services.stage59_uvr_runner_contract import (
+from backend.services.uvr_smoke_service import (
     INVALID_RUNNER_MODE_REASON,
     REAL_RUNNER_BLOCKED_REASON,
     MockUvrAbRunner,

@@ -11,8 +11,10 @@ from pathlib import Path
 from random import shuffle
 
 try:
+    from .engine_paths import PROJECT_ROOT as ENGINE_PROJECT_ROOT, RVC_PYTHON, RVC_WEBUI_DIR
     from .services.training_tuning_service import build_rvc_train_runtime_options
 except ImportError:
+    from engine_paths import PROJECT_ROOT as ENGINE_PROJECT_ROOT, RVC_PYTHON, RVC_WEBUI_DIR
     from services.training_tuning_service import build_rvc_train_runtime_options
 
 
@@ -23,11 +25,13 @@ def _pick_first_existing(*paths: str) -> str:
     return paths[0] if paths else ""
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = str(ENGINE_PROJECT_ROOT)
 DATASET_DIR = os.path.join(PROJECT_ROOT, "shared_data", "datasets")
 WEIGHTS_DIR = os.path.join(PROJECT_ROOT, "shared_data", "weights")
 
-RVC_WEBUI_DIR = os.environ.get("FEISHARK_RVC_DIR") or _pick_first_existing(
+_LEGACY_RVC_WEBUI_DIR_CANDIDATES = (
+    os.path.join(PROJECT_ROOT, "external", "rvc-webui"),
+    os.path.join(PROJECT_ROOT, "external", "rvc"),
     r"D:\RVC\RVCv2",
     r"D:\RVC\RVC",
     r"C:\Users\ASUS\WorkBuddy\20260427153731\RVC-WebUI",
@@ -36,10 +40,11 @@ RVC_CONFIGS_DIR = os.path.join(RVC_WEBUI_DIR, "configs", "inuse")
 RVC_LOGS_DIR = os.path.join(RVC_WEBUI_DIR, "logs")
 RVC_MUTE_DIR = os.path.join(RVC_WEBUI_DIR, "logs", "mute")
 
-RVC_PYTHON = os.environ.get("FEISHARK_RVC_PYTHON") or _pick_first_existing(
+_LEGACY_RVC_PYTHON_CANDIDATES = (
     os.path.join(RVC_WEBUI_DIR, "runtime", "python.exe"),
-    r"D:\Miniconda3\envs\rvc\python.exe",
     os.path.join(RVC_WEBUI_DIR, "venv", "Scripts", "python.exe"),
+    os.path.join(PROJECT_ROOT, "external", "rvc-webui", "runtime", "python.exe"),
+    r"D:\Miniconda3\envs\rvc\python.exe",
     sys.executable,
 )
 

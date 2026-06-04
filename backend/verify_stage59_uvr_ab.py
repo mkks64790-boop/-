@@ -37,12 +37,13 @@ from backend.services.short_chain_uvr_service import (  # noqa: E402
     plan_dry_run,
     select_uvr_ab_entries,
 )
-from backend.services.stage59_execution_policy_service import (  # noqa: E402
+from backend.services.execution_safety_service import (  # noqa: E402
     REAL_RUNNER_NOT_ENABLED_REASON,
     evaluate_execution_policy,
 )
-from backend.services.stage59_uvr_mock_execute_service import mock_execute_uvr_ab  # noqa: E402
-from backend.services.stage59_uvr_runner_contract import (  # noqa: E402
+from backend.services.uvr_smoke_service import evaluate_real_smoke_plan  # noqa: E402
+from backend.services.uvr_smoke_service import mock_execute_uvr_ab  # noqa: E402
+from backend.services.uvr_smoke_service import (  # noqa: E402
     REAL_RUNNER_BLOCKED_REASON,
     RunnerMode,
 )
@@ -100,6 +101,11 @@ def main(argv: list[str] | None = None) -> int:
         "--approval-preflight",
         action="store_true",
         help="59C-3 approval gate preflight (metadata-only; no real UVR)",
+    )
+    parser.add_argument(
+        "--real-smoke-plan",
+        action="store_true",
+        help="59C-4b real UVR smoke plan only (no UVR execution)",
     )
     parser.add_argument(
         "--confirm-execute",
@@ -164,6 +170,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.approval_preflight:
         return _run_approval_preflight(
+            args,
+            manifest_path=manifest_path,
+            root=root,
+            check_files=check_files,
+        )
+
+    if args.real_smoke_plan:
+        return _run_real_smoke_plan(
             args,
             manifest_path=manifest_path,
             root=root,
@@ -571,6 +585,75 @@ def _run_approval_preflight(
         if result.get("blocked_reasons"):
             print(f"warnings={json.dumps(result['blocked_reasons'], ensure_ascii=False)}")
         print(f"approval_complete={result.get('approval_complete', False)}")
+        print("STAGE59_UVR_AB PASS")
+    return 0
+
+
+def _run_real_smoke_plan(
+    args: argparse.Namespace,
+    *,
+    manifest_path: Path,
+    root: Path,
+    check_files: bool,
+) -> int:
+    if not args.entry_id:
+        _emit(
+            args,
+            {
+                "status": "FAIL",
+                "reason": "entry_id_required_for_real_smoke_plan",
+                "exit_code": 1,
+            },
+            text="STAGE59_UVR_AB FAIL entry_id_required_for_real_smoke_plan",
+        )
+        return 1
+
+    result = evaluate_real_smoke_plan(
+        args.entry_id,
+        manifest_path=manifest_path,
+        project_root=root,
+        clip_seconds=45,
+        check_file_exists=check_files,
+        confirm_execute=args.confirm_execute,
+        approval_token=args.approval_token,
+        max_items=args.max_items,
+    )
+    if not result.get("ok"):
+        _emit(
+            args,
+            {
+                "status": "FAIL",
+                "reason": result.get("blocked_reasons", ["real_smoke_plan_blocked"]),
+                "plan": result,
+                "exit_code": 1,
+                "real_execute_allowed": False,
+                "audio_files_written": False,
+            },
+            text=f"STAGE59_UVR_AB FAIL {result.get('blocked_reasons')}",
+        )
+        return 1
+
+    payload = {
+        "status": "PASS",
+        "mode": "real_smoke_plan",
+        "schema_version": SCHEMA_VERSION,
+        "manifest": str(manifest_path),
+        "entry_id": args.entry_id,
+        "plan": result,
+        "real_execute_allowed": False,
+        "audio_files_written": False,
+        "exit_code": 0,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("STAGE59_UVR_AB")
+        print(f"manifest={manifest_path}")
+        print("mode=real_smoke_plan real_execute_allowed=false audio_files_written=false")
+        print(f"entry_id={args.entry_id}")
+        print(f"approval_complete={result.get('approval_complete', False)}")
+        print(f"planned_sandbox={result.get('planned_sandbox')}")
+        print(f"blocked_reasons={json.dumps(result.get('blocked_reasons', []), ensure_ascii=False)}")
         print("STAGE59_UVR_AB PASS")
     return 0
 

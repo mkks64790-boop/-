@@ -9,6 +9,21 @@ import sys
 import time
 import re
 
+try:
+    from .engine_paths import (
+        AUDIO_PIPELINE_DIR,
+        AUDIO_PIPELINE_VENV,
+        PROJECT_ROOT as ENGINE_PROJECT_ROOT,
+        UVR5_MODEL_PATH,
+    )
+except ImportError:
+    from engine_paths import (
+        AUDIO_PIPELINE_DIR,
+        AUDIO_PIPELINE_VENV,
+        PROJECT_ROOT as ENGINE_PROJECT_ROOT,
+        UVR5_MODEL_PATH,
+    )
+
 # 路径发现：优先环境变量，其次常见安装目录
 def _pick_first_existing(*paths: str) -> str:
     for path in paths:
@@ -18,14 +33,17 @@ def _pick_first_existing(*paths: str) -> str:
 
 # ── 配置 ──────────────────────────────────────────────
 
-AUDIO_PIPELINE_DIR = os.environ.get("FEISHARK_AUDIO_PIPELINE") or _pick_first_existing(
+PROJECT_ROOT = str(ENGINE_PROJECT_ROOT)
+_LEGACY_AUDIO_PIPELINE_DIR_CANDIDATES = (
+    os.path.join(PROJECT_ROOT, "external", "audio-pipeline"),
     r"D:\AudioPipeline",
     r"C:\Users\ASUS\AudioPipeline",
 )
-AUDIO_PIPELINE_VENV = os.path.join(AUDIO_PIPELINE_DIR, "venv", "Scripts", "python.exe")
-UVR5_MODEL_PATH = os.path.join(AUDIO_PIPELINE_DIR, "models", "UVR-MDX-NET-Voc_FT.onnx")
+AUDIO_PIPELINE_VENV = AUDIO_PIPELINE_VENV
+UVR5_MODEL_PATH = UVR5_MODEL_PATH
+# Workspace-bundled fallbacks (for self-contained training stability)
+# Prefer external/audio-pipeline/ inside project for no external install fragility
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUT_ROOT = os.path.join(PROJECT_ROOT, "shared_data", "outputs")
 
 # 任务状态常量

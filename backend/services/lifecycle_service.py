@@ -39,6 +39,8 @@ COVER_TRANSIENT_ARTIFACT_TYPES = frozenset(
         "cover_instrumental",
         "cover_fixed",
         "cover_transformed",
+        "uvr_vocal",
+        "uvr_instrumental",
     }
 )
 

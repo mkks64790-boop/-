@@ -1,6 +1,6 @@
 """Stage59C-3 approval audit tests."""
 
-from backend.services.stage59_approval_audit_service import (
+from backend.services.execution_safety_service import (
     clear_audit_store,
     list_audit_events,
     record_audit_event,

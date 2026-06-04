@@ -26,6 +26,42 @@ backend/rvc_webui_stderr.log
 *.index
 *.npy
 
+# External bundled engines (RVC-WebUI, AudioPipeline) - self-contained for stable training
+# Binaries, venvs, large models ignored to keep repo light; use setup scripts to populate
+external/rvc-webui/venv/
+external/rvc-webui/runtime/
+external/rvc-webui/models/
+external/rvc-webui/logs/
+external/rvc-webui/*.log
+external/rvc-webui-backup/venv/
+external/rvc-webui-backup/runtime/
+external/rvc-webui-backup/models/
+external/rvc-webui-backup/logs/
+external/rvc-webui-backup/*.log
+external/audio-pipeline/venv/
+external/audio-pipeline/models/
+external/audio-pipeline/*.onnx
+external/audio-pipeline/logs/
+external/**/*.pth
+external/**/*.index
+external/**/*.onnx
+external/**/*.npy
+external/**/venv/
+external/**/runtime/
+
+# Allow small setup scripts and configs in external/
+!external/rvc-webui/*.ps1
+!external/rvc-webui/*.sh
+!external/rvc-webui/*.md
+!external/rvc-webui/requirements*.txt
+!external/rvc-webui-backup/*.ps1
+!external/rvc-webui-backup/*.sh
+!external/rvc-webui-backup/*.md
+!external/rvc-webui-backup/requirements*.txt
+!external/audio-pipeline/*.ps1
+!external/audio-pipeline/*.sh
+!external/audio-pipeline/*.md
+
 playwright-report/
 test-results/
 stage16_desktop.png

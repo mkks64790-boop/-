@@ -24,8 +24,11 @@ def _normalize_run_id(run_id: str) -> str:
 
 def validate_caps(*, max_items: int, clip_seconds: int) -> dict[str, Any]:
     errors: list[str] = []
-    if int(max_items) != MAX_ITEMS:
-        errors.append(f"max_items_must_be_{MAX_ITEMS}")
+    try:
+        if int(max_items) != MAX_ITEMS:
+            errors.append(f"max_items_must_be_{MAX_ITEMS}")
+    except (TypeError, ValueError):
+        errors.append("max_items_invalid")
     try:
         clip = int(clip_seconds)
     except (TypeError, ValueError):

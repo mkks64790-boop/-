@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from backend.services.short_chain_manifest_service import SCHEMA_VERSION
-from backend.services.stage59_transient_artifact_service import clear_transient_store
-from backend.services.stage59_uvr_mock_execute_service import mock_execute_uvr_ab
+from backend.services.artifact_lifecycle_service import clear_transient_store
+from backend.services.uvr_smoke_service import mock_execute_uvr_ab
 
 
 def _base_manifest() -> dict:
