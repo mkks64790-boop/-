@@ -1,0 +1,3 @@
+# Placeholder for complete AudioPipeline / UVR5.
+# Includes the venv, run_uvr5_split.py, models/UVR-MDX-NET-Voc_FT.onnx etc.
+# For stable UVR separation in cover and material prep with your prepared data.

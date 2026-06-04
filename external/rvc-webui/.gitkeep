@@ -1,0 +1,3 @@
+# Placeholder so the directory structure for complete primary RVC-WebUI is tracked.
+# Copy your full RVC-WebUI (with infer-web.py, assets/weights containing your models including 秋风 if applicable, etc.) here.
+# Do not commit the actual large files.
