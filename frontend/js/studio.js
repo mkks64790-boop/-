@@ -48,20 +48,20 @@ const REVIEW_ROUTE_META = {
     description: "先用 A/B 面板听完当前成品和原始输入，再保存人工结论。",
   },
   route_to_rework: {
-    label: "回 Factory 调分离 / 重跑 cover",
-    description: "当前成品需要返工，下一步应回到 Factory 检查分离、模型或重跑 cover。",
+    label: "回工厂调分离 / 重跑翻唱",
+    description: "当前成品需要返工，下一步应回到工厂检查分离、模型或重跑翻唱。",
   },
   route_to_candidate_pool: {
     label: "保留为可用候选",
     description: "当前成品可用但还不是发布候选，先收进候选池继续对比。",
   },
   route_to_release_candidate: {
-    label: "送入 Factory 候选成品",
-    description: "当前成品可作为发布候选，下一步回 Factory 进入候选成品管理。",
+    label: "送入工厂候选成品",
+    description: "当前成品可作为发布候选，下一步回工厂进入候选成品管理。",
   },
   route_to_archive_or_rerun: {
     label: "标记废弃，建议重跑",
-    description: "当前成品不建议继续修，回 Factory 重新选择处理路线。",
+    description: "当前成品不建议继续修，回工厂重新选择处理路线。",
   },
 };
 
@@ -400,16 +400,16 @@ function renderStudioReviewNextAction(job = null, artifact = null, payload = nul
       ? `<span class="detail-action-hint">继续使用上方 A/B 播放器人工判断，不会自动启动重任务。</span>`
       : "",
     route === "route_to_rework"
-      ? renderReviewActionButton(factoryUrl, "回 Factory 返工", "primary-btn warm")
+      ? renderReviewActionButton(factoryUrl, "回工厂返工", "primary-btn warm")
       : "",
     route === "route_to_candidate_pool"
       ? `<span class="detail-action-hint">已保留为可用候选；可继续对比其它版本。</span>`
       : "",
     route === "route_to_release_candidate"
-      ? renderReviewActionButton(factoryUrl, "送入 Factory 候选成品", "primary-btn warm")
+      ? renderReviewActionButton(factoryUrl, "送入工厂候选成品", "primary-btn warm")
       : "",
     route === "route_to_archive_or_rerun"
-      ? renderReviewActionButton(factoryUrl, "回 Factory 重跑", "ghost-btn danger")
+      ? renderReviewActionButton(factoryUrl, "回工厂重跑", "ghost-btn danger")
       : "",
     renderReviewActionButton(toAbsoluteUrl(downloadUrl), "下载当前成品", "ghost-btn"),
   ].filter(Boolean).join("");
@@ -719,13 +719,13 @@ function syncEffectRackExportAction() {
   } else if (!isRenderEngineAvailable(state.selectedRenderEngine)) {
     hint.textContent = renderEngineUnavailableReason(state.selectedRenderEngine);
   } else if (!state.sourceTrackId || !state.selectedJob?.job_id) {
-    hint.textContent = "需要从带 Track 和 Job 的 Studio 版本进入，才能导出处理版。";
+    hint.textContent = "需要从带曲目和任务的录音棚版本进入，才能导出处理版。";
   } else if (!state.sourceArtifactId || !state.selectedArtifact?.download_url) {
-    hint.textContent = "当前没有可播放 artifact，暂不能导出处理版。";
+    hint.textContent = "当前没有可播放产物，暂不能导出处理版。";
   } else if (state.selectedRenderEngine === RENDER_ENGINE_FFMPEG_V0) {
-    hint.textContent = "当前导出会调用本机 ffmpeg 离线生成新音频；当前不是 VST。";
+    hint.textContent = "当前导出会调用本机 ffmpeg 离线生成新音频；当前不是 VST 插件。";
   } else {
-    hint.textContent = "当前导出为 copy-only 草稿：会登记新版本，但暂不执行真实 DSP/VST。";
+    hint.textContent = "当前导出为仅复制草稿：会登记新版本，但暂不执行真实 DSP/VST 处理。";
   }
   syncRenderModeUi();
 }
@@ -1087,7 +1087,7 @@ function renderCurrentResourceSummary(job = null, artifact = null) {
   if (!job) {
     summary.textContent = state.jobs.length
       ? "当前未载入成品，保留快速选择和摘要，完整试听品库按需展开。"
-      : "当前没有可试听成品。先回到 Dashboard 完成一个 cover job。";
+      : "当前没有可试听成品。先回到工作台完成一个翻唱任务。";
     return;
   }
 
@@ -1185,7 +1185,7 @@ function renderSourceContext(job = null, artifact = null) {
   setActionLink("studioFactoryOpenBtn", context.factoryUrl, hasFactorySource);
 
   if (!job) {
-    title.textContent = "当前不是从 Factory 曲目位进入";
+    title.textContent = "当前不是从工厂曲目位进入";
     summary.textContent = "普通打开 `/studio` 时，仍会保留全局试听品库兼容行为。";
     grid.innerHTML = `
       <div class="meta-card">
@@ -1216,9 +1216,9 @@ function renderSourceContext(job = null, artifact = null) {
 
   title.textContent = hasFactorySource
     ? `来源曲目：${trackTitle}`
-    : "当前成品未关联 Factory 曲目";
+    : "当前成品未关联工厂曲目";
   summary.textContent = hasFactorySource
-    ? `这是 ${voiceLabel} 的翻唱成品，当前载入 ${fileName}，模型来源已跟随成品一起带入 Studio。`
+    ? `这是 ${voiceLabel} 的翻唱成品，当前载入 ${fileName}，模型来源已跟随成品一起带入录音棚。`
     : `当前载入 ${fileName}，仍可在全局试听品库里继续切换其他已完成成品。`;
   grid.innerHTML = `
     <div class="meta-card">
@@ -1320,8 +1320,8 @@ function renderTrackHistory() {
 
   if (!state.sourceTrackId) {
     panel.hidden = true;
-    list.innerHTML = `<div class="studio-resource-empty">当前没有来源 Track，上方保持普通 Studio 兼容模式。</div>`;
-    summary.textContent = "只有从 Factory 曲目位进入，才会出现当前曲目的版本账本。";
+    list.innerHTML = `<div class="studio-resource-empty">当前没有来源曲目，上方保持普通录音棚兼容模式。</div>`;
+    summary.textContent = "只有从工厂曲目位进入，才会出现当前曲目的版本账本。";
     updateGlobalLibraryHint();
     syncTrackHistoryDrawer();
     renderCurrentMasterCard();
@@ -1332,8 +1332,8 @@ function renderTrackHistory() {
   updateGlobalLibraryHint();
 
   if (!state.trackHistory.length) {
-    summary.textContent = "当前来源 Track 还没有可回放的 Studio 版本。";
-    list.innerHTML = `<div class="studio-resource-empty">这个来源 Track 还没有更多已完成版本，可先回到 Factory 继续创建新版本。</div>`;
+    summary.textContent = "当前来源曲目还没有可回放的录音棚版本。";
+    list.innerHTML = `<div class="studio-resource-empty">这个来源曲目还没有更多已完成版本，可先回到工厂继续创建新版本。</div>`;
     syncTrackHistoryDrawer();
     renderCurrentMasterCard();
     return;
@@ -1445,7 +1445,7 @@ async function refreshTrackHistory(trackId = "", { force = false } = {}) {
       state.currentMasterJobId = "";
       state.currentMasterArtifactId = "";
       renderTrackHistory();
-      showToast(`Studio 读取当前曲目版本失败：${toErrorMessage(fallbackError)}`, "error");
+      showToast(`录音棚读取当前曲目版本失败：${toErrorMessage(fallbackError)}`, "error");
       return [];
     }
   }
@@ -1471,7 +1471,7 @@ function renderResourcePicker() {
 
   $("studioResourceList").innerHTML = visibleJobs.length
     ? visibleJobs.map(buildResourceCard).join("")
-    : `<div class="studio-resource-empty">还没有已完成的翻唱成品。先回到 Dashboard 创建并完成一个 cover job，再进入修音室。</div>`;
+    : `<div class="studio-resource-empty">还没有已完成的翻唱成品。先回到工作台创建并完成一个翻唱任务，再进入修音室。</div>`;
 
   renderCurrentResourceSummary(state.selectedJob, state.selectedArtifact);
 }
@@ -1533,12 +1533,12 @@ function renderEmptyStudio() {
   state.effectRackState = loadEffectRackState(state.effectRackStorageKey);
   renderCurrentResourceSummary(null, null);
   renderSourceContext(null, null);
-  $("studioTrackKicker").textContent = "等待选择 cover 成品";
+  $("studioTrackKicker").textContent = "等待选择翻唱成品";
   $("studioTrackTitle").textContent = "请选择一个已完成的翻唱任务";
-  $("studioTrackSubline").textContent = "可从右侧资源列表选取，也可在 Dashboard 任务详情里点击“进入 Studio”。";
+  $("studioTrackSubline").textContent = "可从右侧资源列表选取，也可在工作台任务详情里点击“进入录音棚”。";
   $("studioCurrentFileName").textContent = "当前文件：-";
   $("studioCurrentDuration").textContent = "时长：-";
-  $("studioCurrentJobId").textContent = "Job：-";
+  $("studioCurrentJobId").textContent = "任务：-";
   $("studioCurrentTime").textContent = "播放位置：00:00";
   $("studioArtifactStage").textContent = "产物阶段：-";
   $("studioArtifactPath").textContent = "产物路径：-";
@@ -1582,7 +1582,7 @@ function renderEmptyStudio() {
     </div>
   `;
   $("studioStageLogList").innerHTML = `<div class="studio-resource-empty">载入成品后显示阶段日志。</div>`;
-  $("studioTechnicalSummary").textContent = "默认收起 job / artifact 路径、长 ID、阶段日志等工程字段。";
+  $("studioTechnicalSummary").textContent = "默认收起任务 / 产物路径、长 ID、阶段日志等工程字段。";
   renderTrackHistory();
   renderCurrentMasterCard();
   renderJobNoteEditor(null);
@@ -1595,15 +1595,15 @@ function renderEmptyStudio() {
 function renderStudioContractUnavailable({ jobId = "", artifactId = "", error = null } = {}) {
   renderEmptyStudio();
   const message = `Backend restart or UI contract unavailable. Requested job_id=${jobId || "-"} artifact_id=${artifactId || "-"}${error ? `; ${toErrorMessage(error)}` : ""}`;
-  $("studioTrackKicker").textContent = "Studio contract unavailable";
-  $("studioTrackTitle").textContent = "Backend restart or contract update required";
+  $("studioTrackKicker").textContent = "录音棚契约不可用";
+  $("studioTrackTitle").textContent = "后端重启或契约更新所需";
   $("studioTrackSubline").textContent = message;
   $("studioSummaryText").textContent = message;
   $("studioCurrentResourceSummary").textContent = message;
   $("studioResourceList").innerHTML = `<div class="studio-resource-empty">${escapeHtml(message)}</div>`;
   $("studioTechnicalSummary").textContent = message;
   $("studioStageLogList").innerHTML = `<div class="studio-resource-empty">${escapeHtml(message)}</div>`;
-  setStudioStatus("Backend restart / contract unavailable", "danger");
+  setStudioStatus("后端重启 / 契约不可用", "danger");
 }
 
 function pickPlayableArtifact(jobId, artifacts, requestedArtifactId = "") {
@@ -1677,7 +1677,7 @@ function renderTechnicalDetails(job, artifact) {
   const artifactPath = artifact?.file_path || artifact?.download_url || "-";
   const artifactId = artifact?.artifact_id || "-";
   const voiceSummary = jobModelSourceSummary(job);
-  technicalSummary.textContent = "默认收起 job / artifact 路径、长 ID、阶段日志等工程字段。";
+  technicalSummary.textContent = "默认收起任务 / 产物路径、长 ID、阶段日志等工程字段。";
   metaGrid.innerHTML = `
     <div class="meta-card">
       <div class="meta-label">Job ID</div>
@@ -1749,7 +1749,7 @@ function renderArtifactSummary(job, artifact) {
     versionHint.textContent = `当前试听不是这个 Track 的最新版本，但它已经被设为当前主成品。最新版本是 ${latestLabel}。`;
   } else if (hasTrackHistory && isLatest && isMaster) {
     versionHint.hidden = false;
-    versionHint.textContent = "当前试听既是最新版本，也是这个 Track 的当前主成品。";
+    versionHint.textContent = "当前试听既是最新版本，也是这个曲目的当前主成品。";
   } else if (hasTrackHistory && isLatest && master?.job_id && !isMaster) {
     versionHint.hidden = false;
     versionHint.textContent = `当前试听是这个 Track 的最新版本，但当前主成品仍是 ${masterLabel}。`;
@@ -1819,7 +1819,7 @@ async function handleSetCurrentMaster(jobId, artifactId = "") {
       renderArtifactSummary(state.selectedJob, state.selectedArtifact);
     }
     renderCurrentMasterCard();
-    showToast("当前主成品已切换，Factory 和 Studio 会同步采用这个版本。", "success");
+    showToast("当前主成品已切换，工厂和录音棚会同步采用这个版本。", "success");
   } catch (error) {
     showToast(`设置当前主成品失败：${toErrorMessage(error)}`, "error");
   }
@@ -1843,7 +1843,7 @@ function syncPlayerUi(job, artifact) {
     ? `当前载入 ${fileName}，后续可在此基础上接入更细的片段编辑和导出链。`
     : "当前通过兼容下载入口载入 final_master，适合继续试听与后处理设计。";
   $("studioCurrentFileName").textContent = `当前文件：${fileName}`;
-  $("studioCurrentJobId").textContent = `Job：${job.job_id}`;
+  $("studioCurrentJobId").textContent = `任务：${job.job_id}`;
   $("studioArtifactStage").textContent = `产物阶段：${artifact?.stage_name || job.current_stage || "-"}`;
   $("studioArtifactPath").textContent = `产物路径：${artifact?.file_path || playUrl}`;
   $("studioCurrentTime").textContent = "播放位置：00:00";
@@ -1909,7 +1909,7 @@ async function loadJob(jobId, { artifactId = "" } = {}) {
     renderTrackHistory();
     renderArtifactSummary(job, artifact);
   } catch (error) {
-    showToast(`Studio 载入任务失败：${toErrorMessage(error)}`, "error");
+    showToast(`录音棚载入任务失败：${toErrorMessage(error)}`, "error");
     renderStudioContractUnavailable({ jobId, artifactId, error });
   }
 }
@@ -2031,7 +2031,7 @@ async function refreshResources() {
     await setStudioLibraryCollapsed(getStudioLibraryCollapsed(), { immediate: true });
     await loadJob(nextJobId, { artifactId: requestedArtifactId });
   } catch (error) {
-    showToast(`Studio 读取成品列表失败：${toErrorMessage(error)}`, "error");
+    showToast(`录音棚读取成品列表失败：${toErrorMessage(error)}`, "error");
     const params = new URLSearchParams(window.location.search);
     const requestedJobId = params.get("job_id") || "";
     const requestedArtifactId = params.get("artifact_id") || "";
@@ -2042,7 +2042,7 @@ async function refreshResources() {
     $("studioResourceCount").textContent = "成品资源读取失败";
     $("studioLibrarySummary").textContent = "成品资源读取失败，请稍后重试。";
     $("studioResourceSelect").innerHTML = `<option value="">资源读取失败</option>`;
-    $("studioResourceList").innerHTML = `<div class="studio-resource-empty">成品资源读取失败，请回到 Dashboard 确认至少存在一个已完成的 cover job。</div>`;
+    $("studioResourceList").innerHTML = `<div class="studio-resource-empty">成品资源读取失败，请回到工作台确认至少存在一个已完成的翻唱任务。</div>`;
     await setStudioLibraryCollapsed(true, { immediate: true, allowEmptyOpen: true });
     renderEmptyStudio();
   }

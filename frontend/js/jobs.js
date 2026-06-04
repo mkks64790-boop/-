@@ -538,14 +538,14 @@ function renderStage47Acceptance() {
   $("stage47TrainingJobValue").textContent = training?.job_id || "-";
   $("stage47ModelValue").textContent = model?.model_id || model?.model_name || "-";
   $("stage47CoverJobValue").textContent = cover?.job_id || "-";
-  $("stage47StudioValue").textContent = data.studioReady ? "可进入 Studio" : (missingPlayback ? "后端缺少播放 URL" : "未就绪");
+  $("stage47StudioValue").textContent = data.studioReady ? "可进入录音棚" : (missingPlayback ? "后端缺少播放 URL" : "未就绪");
 
   if (data.unavailable) {
     $("stage47E2eSummary").textContent = data.unavailable;
   } else if (!hasAny) {
-    $("stage47E2eSummary").textContent = "等待地基生成真实闭环：当前真实 API 中尚未发现 Stage47 training job / model / cover job。";
+    $("stage47E2eSummary").textContent = "等待地基生成真实闭环：当前真实 API 中尚未发现 Stage47 训练任务 / 模型 / 翻唱任务。";
   } else {
-    $("stage47E2eSummary").textContent = "已读取真实 Stage47 候选，只展示 API 证明过的训练、模型、cover 与 Studio 状态。";
+    $("stage47E2eSummary").textContent = "已读取真实 Stage47 候选，只展示 API 证明过的训练、模型、翻唱与录音棚状态。";
   }
 
   const trainingPhase = getStage47JobPhase(training);
@@ -559,7 +559,7 @@ function renderStage47Acceptance() {
     { label: "训练输入", phase: training ? "success" : "pending", note: training?.input_path || "等待单文件干声训练 job" },
     { label: "训练 job", phase: trainingPhase, note: training?.job_id || "未发现 Stage47 training job" },
     { label: "新模型", phase: modelPhase, note: model?.model_name || "未发现 Stage47 新模型" },
-    { label: "cover job", phase: coverPhase, note: cover?.job_id || "未发现 Stage47 cover job" },
+    { label: "翻唱任务", phase: coverPhase, note: cover?.job_id || "未发现 Stage47 翻唱任务" },
     { label: "最终音频", phase: artifactPhase, note: artifactPlaybackUrl(artifact, cover) || (missingPlayback ? "后端缺少播放 URL" : "等待 cover_master artifact") },
     { label: "Studio 试听", phase: studioPhase, note: data.studioReady ? "Stage47 短 smoke / 完整 cover" : "等待可播放成品" },
   ];
@@ -591,13 +591,13 @@ function renderStage47Acceptance() {
     links.push(`<button class="ghost-btn" type="button" data-stage47-focus-job="${escapeHtml(training.job_id)}">查看训练 job</button>`);
   }
   if (model?.model_id) {
-    links.push(`<a class="ghost-btn" href="/factory#factoryModelAssetsDrawer">打开 Factory 模型库</a>`);
+    links.push(`<a class="ghost-btn" href="/factory#factoryModelAssetsDrawer">打开工厂模型库</a>`);
   }
   if (cover?.job_id) {
-    links.push(`<button class="ghost-btn" type="button" data-stage47-focus-job="${escapeHtml(cover.job_id)}">查看 cover job</button>`);
+    links.push(`<button class="ghost-btn" type="button" data-stage47-focus-job="${escapeHtml(cover.job_id)}">查看翻唱任务</button>`);
   }
   if (data.studioReady && data.studioUrl) {
-    links.push(`<a class="primary-btn" href="${escapeHtml(data.studioUrl)}">进入 Studio 试听</a>`);
+    links.push(`<a class="primary-btn" href="${escapeHtml(data.studioUrl)}">进入录音棚试听</a>`);
   }
   $("stage47E2eLinks").innerHTML = links.join("");
 }
@@ -838,7 +838,7 @@ function renderDashboardReviewItem(item = {}) {
         ${smokeOnly ? "<span>浏览器 smoke，不是人工验收</span>" : ""}
       </div>
       <div class="panel-actions review-queue-actions">
-        ${blockedByQuality ? '<span class="ghost-btn is-disabled" aria-disabled="true">Blocked by quality gate</span>' : renderReviewActionLink(item.studioUrl, "进入 Studio A/B", "primary-btn warm")}
+        ${blockedByQuality ? '<span class="ghost-btn is-disabled" aria-disabled="true">被质量门禁拦截</span>' : renderReviewActionLink(item.studioUrl, "进入录音棚 A/B", "primary-btn warm")}
         ${renderReviewActionLink(item.downloadUrl, "下载", "ghost-btn")}
       </div>
     </article>
@@ -1163,7 +1163,7 @@ async function rescanMemoryLab() {
   renderMemoryLab();
   try {
     await postJSON("/api/memory/rescan", {});
-    showToast("Memory Lab 已完成重新扫描", "success");
+    showToast("记忆实验室已完成重新扫描", "success");
   } catch (error) {
     state.memoryLab.unavailable = summarizeMemoryApiError(error);
     showToast(state.memoryLab.unavailable, "info");
@@ -1778,7 +1778,7 @@ function getJobSummaryText(job, failedLog = null) {
   }
 
   if (isCompletedStatus(job.status)) {
-    if (job.job_type === "cover") return "这是一个已完成的翻唱任务，可下载成品或进入 Studio 继续处理。";
+    if (job.job_type === "cover") return "这是一个已完成的翻唱任务，可下载成品或进入录音棚继续处理。";
     if (job.generated_model_id) {
       return `这是一个已完成的训练任务，生成模型 ${job.generated_model_id} 已入库，可去模型库查看或直接下载产物。`;
     }
@@ -1799,11 +1799,11 @@ function getJobSummaryText(job, failedLog = null) {
 
 function getJobNextStepText(job) {
   if (isCheckpointRecoveredJob(job)) {
-    return "下一步：去模型库查看恢复模型，或一键送入 AI 翻唱入口；不会自动提交 cover job。";
+    return "下一步：去模型库查看恢复模型，或一键送入 AI 翻唱入口；不会自动提交翻唱任务。";
   }
 
   if (isCompletedStatus(job.status)) {
-    if (job.job_type === "cover") return "下一步：进入 Studio 或下载 final_master.wav。";
+    if (job.job_type === "cover") return "下一步：进入录音棚 或下载 final_master.wav。";
     if (job.job_type === "train") return "下一步：去模型库查看生成模型，或直接送入 AI 翻唱。";
     if (job.generated_model_id) return "下一步：在模型库打开生成模型，或下载 .pth / .index。";
     return "下一步：下载 .pth / .index。";
@@ -2374,7 +2374,7 @@ function renderActionBar(job, stageLogs = []) {
           data-job-id="${escapeHtml(job.job_id)}"
           data-studio-url="${escapeHtml(studioUrl)}"
           data-artifact-id="${escapeHtml(studioArtifact?.artifact_id || "")}"
-        >进入 Studio</button>
+        >进入录音棚</button>
       `);
     } else {
       actions.push(`<div class="detail-action-hint">${escapeHtml(coverMissingArtifactMessage(job, stageLogs))}</div>`);
@@ -2483,7 +2483,7 @@ function renderEmptyDetail() {
   $("jobTrainingConfigDrawer").hidden = true;
   $("jobTrainingConfigSummary").textContent = "旧任务 / 默认配置。";
   $("jobTrainingConfigList").innerHTML = `<div class="detail-empty inline">当前任务没有训练配置。</div>`;
-  $("jobStageLogsSummary").textContent = "默认收起完整 timeline，只保留最近阶段摘要。";
+  $("jobStageLogsSummary").textContent = "默认收起完整时间线，只保留最近阶段摘要。";
   $("jobStageLogsList").innerHTML = `<div class="detail-empty inline">当前还没有阶段日志。</div>`;
   $("jobTechnicalBody").hidden = true;
   $("jobTechnicalDrawer").dataset.collapsed = "true";

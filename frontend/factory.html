@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FeiShark Studio Factory</title>
+  <title>肥鲨发行工厂</title>
   <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,21 +18,21 @@
       <div class="brand-mark">FS</div>
       <div>
         <p class="eyebrow">FeiShark Studio</p>
-        <h1>Release Factory</h1>
-        <p class="subtitle">批量导入曲目、整理歌词版本，并把单首 track 直接桥接到真实翻唱任务。</p>
+        <h1>发行工厂</h1>
+        <p class="subtitle">批量导入曲目、整理歌词版本，并把单首曲目直接桥接到真实翻唱任务。</p>
       </div>
     </div>
 
     <nav class="page-nav" aria-label="产品导航">
-      <a class="page-nav-link" href="/">Dashboard</a>
-      <a class="page-nav-link is-active" href="/factory">Factory</a>
-      <a class="page-nav-link" href="/studio">Studio</a>
+      <a class="page-nav-link" href="/">工作台</a>
+      <a class="page-nav-link is-active" href="/factory">发行工厂</a>
+      <a class="page-nav-link" href="/studio">录音棚</a>
     </nav>
 
     <div class="status-strip">
       <div class="status-chip" id="factoryStatusChip">
         <span class="dot warning" id="factoryStatusDot"></span>
-        <span id="factoryStatusText">正在加载 Factory 数据</span>
+        <span id="factoryStatusText">正在加载工厂数据</span>
       </div>
       <div class="summary-chip"><span class="summary-label">批次</span><strong id="factoryBatchCount">0</strong></div>
       <div class="summary-chip"><span class="summary-label">曲目</span><strong id="factoryTrackCount">0</strong></div>
@@ -45,7 +45,7 @@
       <section class="panel factory-engine-panel" id="factoryEnginePanel">
         <div class="panel-head">
           <div>
-            <p class="eyebrow accent">Local AI Engine</p>
+            <p class="eyebrow accent">本地 AI 引擎</p>
             <h2>引擎管理</h2>
             <p class="subtitle">集中查看 RVC / UVR / SVC 适配器状态；接口未就绪时保持降级提示。</p>
           </div>
@@ -53,7 +53,7 @@
             <button class="ghost-btn" id="factoryEngineScanBtn" type="button">重新扫描引擎</button>
           </div>
         </div>
-        <div class="engine-manager-summary" id="factoryEngineSummary">正在读取 Local AI Engine 状态...</div>
+        <div class="engine-manager-summary" id="factoryEngineSummary">正在读取本地 AI 引擎状态...</div>
         <div class="engine-manager-grid" id="factoryEngineGrid"></div>
       </section>
 
@@ -83,21 +83,21 @@
           <div class="factory-review-group">
             <div class="factory-section-head compact">
               <h4>候选成品</h4>
-              <span id="factoryReleaseCandidateSummary">release_candidate</span>
+              <span id="factoryReleaseCandidateSummary">发行候选</span>
             </div>
             <div class="factory-list" id="factoryReleaseCandidateList"></div>
           </div>
           <div class="factory-review-group">
             <div class="factory-section-head compact">
               <h4>需返工</h4>
-              <span id="factoryNeedsWorkSummary">needs_work</span>
+              <span id="factoryNeedsWorkSummary">需返工</span>
             </div>
             <div class="factory-list" id="factoryNeedsWorkList"></div>
           </div>
           <div class="factory-review-group">
             <div class="factory-section-head compact">
               <h4>未验收</h4>
-              <span id="factoryUnreviewedSummary">unreviewed</span>
+              <span id="factoryUnreviewedSummary">未验收</span>
             </div>
             <div class="factory-list" id="factoryUnreviewedList"></div>
           </div>
@@ -246,7 +246,7 @@
         <div class="factory-section-head factory-section-head-drawer">
           <div>
             <h3>模型资产抽屉</h3>
-            <span id="factoryModelAssetsSummary">模型库默认收起，避免挤占 Factory 首屏。</span>
+            <span id="factoryModelAssetsSummary">模型库默认收起，避免挤占工厂首屏。</span>
           </div>
           <button
             class="ghost-btn drawer-toggle-btn"
@@ -293,11 +293,11 @@
               </select>
             </label>
             <label>
-              <span>Index</span>
+              <span>索引</span>
               <select id="factoryRvcIndexFilter">
                 <option value="">全部</option>
-                <option value="true">有 index</option>
-                <option value="false">无 index</option>
+                <option value="true">有索引</option>
+                <option value="false">无索引</option>
               </select>
             </label>
             <button class="ghost-btn" id="factoryRvcModelSearchBtn" type="button">应用筛选</button>
@@ -347,7 +347,7 @@
             <h2>先建批次，再导入曲目</h2>
           </div>
           <div class="panel-actions">
-            <button class="ghost-btn" id="factoryRefreshBtn" type="button">刷新 Factory</button>
+            <button class="ghost-btn" id="factoryRefreshBtn" type="button">刷新工厂</button>
           </div>
         </div>
 
@@ -369,7 +369,7 @@
                 <span>目标平台</span>
                 <input id="factoryBatchPlatformsInput" type="text" placeholder="可选，逗号分隔，例如 douyin, bilibili, youtube">
               </label>
-              <button class="primary-btn warm" type="submit">创建 batch</button>
+              <button class="primary-btn warm" type="submit">创建批次</button>
             </form>
           </div>
 
@@ -430,7 +430,7 @@
                 <textarea id="factoryTrackTitlesInput" class="factory-textarea" rows="3" placeholder="可选，每行一个标题，顺序对应上传文件"></textarea>
               </label>
               <div class="panel-actions">
-                <button class="primary-btn warm" type="submit">导入 tracks</button>
+                <button class="primary-btn warm" type="submit">导入曲目</button>
                 <button class="ghost-btn" id="factoryReloadTracksBtn" type="button">刷新曲目</button>
               </div>
             </form>
@@ -471,7 +471,7 @@
             <span id="factoryTrackStatus"></span>
             <span id="factoryTrackLyricState"></span>
           </div>
-          <div class="factory-inline-path mono" id="factoryTrackPath">source path: -</div>
+          <div class="factory-inline-path mono" id="factoryTrackPath">源路径: -</div>
         </div>
 
         <div id="factoryTrackOutcomeCard" class="factory-outcome-card" hidden></div>
@@ -506,7 +506,7 @@
                 <div class="panel-actions factory-toolbar">
                   <button class="primary-btn warm" id="factoryCreateCoverJobBtn" type="button">创建翻唱任务</button>
                 </div>
-                <div class="detail-empty inline" id="factoryCoverJobHint">先选择曲目和可用模型，再直接从当前 track 发起 cover job。</div>
+                <div class="detail-empty inline" id="factoryCoverJobHint">先选择曲目和可用模型，再直接从当前曲目发起翻唱任务。</div>
               </div>
             </div>
           </div>

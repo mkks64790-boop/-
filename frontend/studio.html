@@ -18,15 +18,15 @@
       <div class="brand-mark">FS</div>
       <div>
         <p class="eyebrow">FeiShark Studio</p>
-        <h1>修音室 Studio</h1>
+        <h1>修音室</h1>
         <p class="subtitle">围绕当前翻唱成品完成试听、下载、主成品确认和后处理参数草稿，不再把工程细节铺满主屏。</p>
       </div>
     </div>
 
     <nav class="page-nav" aria-label="产品导航">
-      <a class="page-nav-link" href="/">Dashboard</a>
-      <a class="page-nav-link" href="/factory">Factory</a>
-      <a class="page-nav-link is-active" href="/studio">Studio</a>
+      <a class="page-nav-link" href="/">工作台</a>
+      <a class="page-nav-link" href="/factory">发行工厂</a>
+      <a class="page-nav-link is-active" href="/studio">录音棚</a>
     </nav>
 
     <div class="status-strip studio-status-strip">
@@ -34,7 +34,7 @@
         <span class="dot warning" id="studioStatusDot"></span>
         <span id="studioStatusText">等待载入成品资源</span>
       </div>
-      <a class="ghost-btn is-disabled" id="studioFactoryBackBtn" href="/factory" aria-disabled="true">返回 Factory 当前曲目</a>
+      <a class="ghost-btn is-disabled" id="studioFactoryBackBtn" href="/factory" aria-disabled="true">返回工厂当前曲目</a>
       <a class="ghost-btn" href="/">返回工作台</a>
     </div>
   </header>
@@ -44,7 +44,7 @@
       <section class="panel studio-hero-panel">
         <div class="panel-head studio-hero-head">
           <div>
-            <p class="eyebrow accent">Studio · Product Shell</p>
+            <p class="eyebrow accent">录音棚 · 成品工作台</p>
             <h2>当前成品工作台</h2>
             <p class="studio-hero-copy">先确认这首成品能不能听、来自哪个音色、能不能下载；后处理参数以草稿形式保存，不会改写已生成音频。</p>
           </div>
@@ -57,20 +57,20 @@
           <div class="detail-summary-head">
             <div class="detail-summary-head-copy">
               <p class="detail-summary-eyebrow">来源上下文</p>
-              <h3 class="detail-summary-title" id="studioSourceTitle">当前不是从 Factory 曲目位进入</h3>
+              <h3 class="detail-summary-title" id="studioSourceTitle">当前不是从工厂曲目位进入</h3>
               <p class="detail-summary-subline" id="studioSourceSummary">普通打开 `/studio` 时，仍会保留全局试听品库兼容行为。</p>
             </div>
             <div class="panel-actions">
-              <a class="ghost-btn is-disabled" id="studioFactoryOpenBtn" href="/factory" aria-disabled="true">打开 Factory 曲目位</a>
+              <a class="ghost-btn is-disabled" id="studioFactoryOpenBtn" href="/factory" aria-disabled="true">打开工厂曲目位</a>
             </div>
           </div>
           <div class="studio-context-grid" id="studioSourceMetaGrid">
             <div class="meta-card">
-              <div class="meta-label">来源 Track</div>
+              <div class="meta-label">来源曲目</div>
               <div class="meta-value">未关联</div>
             </div>
             <div class="meta-card">
-              <div class="meta-label">所属 Batch</div>
+              <div class="meta-label">所属批次</div>
               <div class="meta-value">-</div>
             </div>
             <div class="meta-card">
@@ -87,9 +87,9 @@
         <div class="studio-player-card">
           <div class="studio-player-row">
             <div>
-              <p class="studio-track-kicker" id="studioTrackKicker">等待选择 cover 成品</p>
+              <p class="studio-track-kicker" id="studioTrackKicker">等待选择翻唱成品</p>
               <h3 class="studio-track-title" id="studioTrackTitle">请选择一个已完成的翻唱任务</h3>
-              <div class="studio-track-subline" id="studioTrackSubline">可从右侧资源列表选取，也可在 Dashboard 任务详情里点击“进入 Studio”。</div>
+              <div class="studio-track-subline" id="studioTrackSubline">可从右侧资源列表选取，也可在工作台任务详情里点击“进入录音棚”。</div>
             </div>
             <div class="studio-player-actions">
               <button class="primary-btn warm" id="studioPlayToggleBtn" type="button" disabled>播放</button>
@@ -100,7 +100,7 @@
           <div class="studio-meta-row">
             <span id="studioCurrentFileName">当前文件：-</span>
             <span id="studioCurrentDuration">时长：-</span>
-            <span class="mono" id="studioCurrentJobId">Job：-</span>
+            <span class="mono" id="studioCurrentJobId">任务：-</span>
           </div>
 
           <audio id="studioAudio" class="studio-audio" controls preload="metadata"></audio>
@@ -146,7 +146,7 @@
             </div>
           </div>
           <div class="studio-effect-export-hint" id="studioEffectRackExportHint">
-            载入带 Track、Job 和可播放 artifact 的 Studio 版本后，可导出处理版草稿。
+            载入带曲目、任务和可播放产物的录音棚版本后，可导出处理版草稿。
           </div>
           <div class="studio-effect-rack-list" id="studioEffectRackList"></div>
         </section>
@@ -168,10 +168,10 @@
             <article class="studio-control-card">
               <div class="studio-control-head">
                 <strong>响度目标草稿</strong>
-                <span class="studio-control-value" id="studioLoudnessValue">Studio 平衡</span>
+                <span class="studio-control-value" id="studioLoudnessValue">录音棚平衡</span>
               </div>
               <select id="studioLoudnessMode">
-                <option value="balanced">Studio 平衡</option>
+                <option value="balanced">录音棚平衡</option>
                 <option value="streaming">流媒体友好</option>
                 <option value="broadcast">更靠前输出</option>
               </select>
@@ -186,8 +186,8 @@
       <section class="panel">
         <div class="panel-head">
           <div>
-            <p class="eyebrow accent">Studio · 成品资源</p>
-            <h2>选择一个已完成 cover job</h2>
+            <p class="eyebrow accent">录音棚 · 成品资源</p>
+            <h2>选择一个已完成翻唱任务</h2>
           </div>
         </div>
 
@@ -200,7 +200,7 @@
               </div>
               <a class="ghost-btn is-disabled" id="studioCurrentMasterOpenBtn" href="#" aria-disabled="true">打开</a>
             </div>
-            <div class="studio-inline-note" id="studioCurrentMasterSummary">载入带 Track 的 Studio 版本后，这里会固定显示当前主成品。</div>
+            <div class="studio-inline-note" id="studioCurrentMasterSummary">载入带曲目的录音棚版本后，这里会固定显示当前主成品。</div>
             <div class="studio-current-master-meta" id="studioCurrentMasterMeta">
               <span>类型：-</span>
               <span>处理：-</span>
@@ -276,7 +276,7 @@
       <section class="panel studio-inspector-panel">
         <div class="panel-head">
           <div>
-            <p class="eyebrow warm">Studio · Inspector</p>
+            <p class="eyebrow warm">录音棚 · 检查器</p>
             <h2>当前成品摘要</h2>
           </div>
         </div>
@@ -339,7 +339,7 @@
             <div class="studio-review-head">
               <div>
                 <strong>试听验收 A/B</strong>
-                <div class="studio-inline-note">A 轨使用上方成品播放器，B 轨为原始输入参考；评分会写入当前 artifact metadata。</div>
+                <div class="studio-inline-note">A 轨使用上方成品播放器，B 轨为原始输入参考；评分会写入当前产物 metadata。</div>
               </div>
               <button class="primary-btn warm" id="studioReviewSaveBtn" type="button">保存试听验收</button>
             </div>
@@ -406,7 +406,7 @@
           <div class="detail-drawer-head">
             <div>
               <strong>技术详情与阶段日志</strong>
-              <div class="detail-drawer-summary" id="studioTechnicalSummary">默认收起 job / artifact 路径、长 ID、阶段日志等工程字段。</div>
+              <div class="detail-drawer-summary" id="studioTechnicalSummary">默认收起任务 / 产物路径、长 ID、阶段日志等工程字段。</div>
             </div>
             <button
               class="ghost-btn drawer-toggle-btn"
@@ -421,7 +421,7 @@
           <div class="detail-drawer-body" id="studioTechnicalBody" hidden>
             <div class="studio-meta-grid studio-summary-grid" id="studioTechnicalMetaGrid">
               <div class="meta-card">
-                <div class="meta-label">Artifact 路径</div>
+                <div class="meta-label">产物路径</div>
                 <div class="meta-value mono" id="studioArtifactPath">产物路径：-</div>
               </div>
             </div>

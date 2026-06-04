@@ -64,7 +64,7 @@ function renderRecoveredAcceptanceGuide() {
       <ol>
         <li>选择歌曲</li>
         <li>创建 AI 翻唱</li>
-        <li>完成后打开 Studio 试听</li>
+        <li>完成后打开录音棚试听</li>
       </ol>
     </div>
   `;

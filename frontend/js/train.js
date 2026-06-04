@@ -183,7 +183,7 @@ function renderDashboardTrainingPresetSummary() {
         <strong>${config.preset_key}</strong>
         <span>${config.epochs} epochs · batch ${config.batch_size} · ${config.sample_rate} · GPU ${config.gpu_risk_label}</span>
       </div>
-      <a class="ghost-btn drawer-toggle-btn" href="/factory#factoryTrainingTuningPanel">去 Factory 调参</a>
+      <a class="ghost-btn drawer-toggle-btn" href="/factory#factoryTrainingTuningPanel">去工厂调参</a>
     </div>
     ${state.presetsUnavailable ? `<div class="training-config-note">${state.presetsUnavailable}</div>` : ""}
   `;

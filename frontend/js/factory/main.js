@@ -518,7 +518,7 @@ function renderFactoryReviewRoutingItem(item = {}) {
         <span>${escapeHtml(formatDateTime(item.createdAt))}</span>
       </div>
       <div class="panel-actions">
-        ${item.studioUrl ? `<button class="primary-btn warm" type="button" data-studio-url="${escapeHtml(item.studioUrl)}">进入 Studio</button>` : ""}
+        ${item.studioUrl ? `<button class="primary-btn warm" type="button" data-studio-url="${escapeHtml(item.studioUrl)}">进入录音棚</button>` : ""}
         ${item.downloadUrl ? `<button class="ghost-btn" type="button" data-download-url="${escapeHtml(item.downloadUrl)}">下载</button>` : ""}
         ${item.jobId ? `<a class="ghost-btn" href="/#taskCenter" title="${escapeHtml(item.jobId)}">查看来源 job</a>` : ""}
       </div>
@@ -1972,7 +1972,7 @@ function renderTrackCoverControls() {
     select.innerHTML = `<option value="">当前没有可用模型</option>`;
     select.disabled = true;
     button.disabled = true;
-    hint.textContent = "当前没有可用模型，请先回到 Dashboard 导入或重扫模型。";
+    hint.textContent = "当前没有可用模型，请先回到工作台导入或重扫模型。";
     return;
   }
 
@@ -1994,22 +1994,22 @@ function renderTrackCoverControls() {
   button.disabled = !canCreate;
 
   if (!track) {
-    hint.textContent = "先选择一个曲目，再从当前 track 直接发起 cover job。";
+    hint.textContent = "先选择一个曲目，再从当前曲目直接发起翻唱任务。";
     return;
   }
 
   if (hasActive) {
-    hint.textContent = "当前曲目已有进行中的关联任务，Factory 会自动刷新状态。";
+    hint.textContent = "当前曲目已有进行中的关联任务，工厂会自动刷新状态。";
     return;
   }
 
-  hint.textContent = `将直接复用 ${basename(track.source_audio_path || "")} 创建 cover job，不再重复上传源音频。`;
+  hint.textContent = `将直接复用 ${basename(track.source_audio_path || "")} 创建翻唱任务，不再重复上传源音频。`;
 }
 
 function buildTrackJobSummary(job) {
   if (isCompletedStatus(job.status)) {
     return job.can_open_studio
-      ? "成品已就绪，可直接进入 Studio 或下载最终成品。"
+      ? "成品已就绪，可直接进入录音棚 或下载最终成品。"
       : "任务已完成。";
   }
   if (isFailedStatus(job.status)) {
@@ -2045,7 +2045,7 @@ function renderTrackOutcome() {
         <p>${escapeHtml(buildTrackJobSummary(completed))}</p>
       </div>
       <div class="panel-actions">
-        ${completed.can_open_studio ? `<button class="primary-btn warm" type="button" data-studio-url="${escapeHtml(completed.studio_url || "")}">进入 Studio</button>` : ""}
+        ${completed.can_open_studio ? `<button class="primary-btn warm" type="button" data-studio-url="${escapeHtml(completed.studio_url || "")}">进入录音棚</button>` : ""}
         ${completed.final_artifact_download_url ? `<button class="ghost-btn" type="button" data-download-url="${escapeHtml(completed.final_artifact_download_url)}">下载成品</button>` : ""}
       </div>
     `;
@@ -2111,7 +2111,7 @@ function renderCurrentMasterCard() {
           <p class="detail-summary-text">
             ${
               latestCompleted
-                ? escapeHtml(`当前仍按最新完成版本 ${fallbackLabel} 作为默认工作流；如需固定较旧版本，请进入 Studio 手动指定当前主成品。`)
+                ? escapeHtml(`当前仍按最新完成版本 ${fallbackLabel} 作为默认工作流；如需固定较旧版本，请进入录音棚手动指定当前主成品。`)
                 : "这个 Track 还没有可指定的完成态成品，先跑通至少一个 cover 版本。"
             }
           </p>
@@ -2121,13 +2121,13 @@ function renderCurrentMasterCard() {
         </div>
       </div>
       <div class="detail-summary-foot">
-        ${latestCompleted ? "未手动指定时，Factory / Studio 仍会优先按最新完成版本继续工作。" : "完成后即可在 Studio 历史区切换真正采用的版本。"}
+        ${latestCompleted ? "未手动指定时，工厂 / 录音棚 仍会优先按最新完成版本继续工作。" : "完成后即可在录音棚历史区切换真正采用的版本。"}
       </div>
       ${
         latestCompleted
           ? `
             <div class="panel-actions">
-              ${latestCompleted.can_open_studio ? `<button class="ghost-btn" type="button" data-studio-url="${escapeHtml(latestCompleted.studio_url || "")}">进入 Studio 指定主成品</button>` : ""}
+              ${latestCompleted.can_open_studio ? `<button class="ghost-btn" type="button" data-studio-url="${escapeHtml(latestCompleted.studio_url || "")}">进入录音棚指定主成品</button>` : ""}
               ${latestCompleted.final_artifact_download_url ? `<button class="ghost-btn" type="button" data-download-url="${escapeHtml(latestCompleted.final_artifact_download_url)}">下载当前默认成品</button>` : ""}
             </div>
           `
@@ -2154,7 +2154,7 @@ function renderCurrentMasterCard() {
         <p class="detail-summary-text">
           ${escapeHtml(
             differsFromLatest
-              ? `当前采用的是手动指定版本 ${masterLabel}。它不是最新完成版本，但会被 Factory 和 Studio 视为这个 Track 的当前主成品。`
+              ? `当前采用的是手动指定版本 ${masterLabel}。它不是最新完成版本，但会被工厂和录音棚视为这个曲目的当前主成品。`
               : `当前采用的是 ${masterLabel}，它就是这个 Track 现在正式使用的主成品。`,
           )}
         </p>
@@ -2177,7 +2177,7 @@ function renderCurrentMasterCard() {
         : `<div class="factory-master-compare">最新完成版本与当前主成品一致，无需额外切换。</div>`
     }
     <div class="panel-actions">
-      ${master.can_open_studio ? `<button class="primary-btn warm" type="button" data-studio-url="${escapeHtml(master.studio_url || "")}">进入 Studio</button>` : ""}
+      ${master.can_open_studio ? `<button class="primary-btn warm" type="button" data-studio-url="${escapeHtml(master.studio_url || "")}">进入录音棚</button>` : ""}
       ${master.final_artifact_download_url ? `<button class="ghost-btn" type="button" data-download-url="${escapeHtml(master.final_artifact_download_url)}">下载主成品</button>` : ""}
     </div>
   `;
@@ -2196,7 +2196,7 @@ function renderTrackJobs() {
 
   const jobs = state.trackJobs || [];
   if (!jobs.length) {
-    summary.textContent = "当前还没有关联任务，可先选择模型并发起一个 cover job。";
+    summary.textContent = "当前还没有关联任务，可先选择模型并发起一个翻唱任务。";
     root.innerHTML = `<div class="detail-empty inline">这个 track 还没有创建过任务。</div>`;
     renderTrackOutcome();
     return;
@@ -2226,7 +2226,7 @@ function renderTrackJobs() {
       ${renderTrackJobSourceLine(job)}
       ${renderPathLine(buildTrackJobSummary(job), { mono: false, subtle: !job.error_summary })}
       <div class="panel-actions">
-        ${job.can_open_studio ? `<button class="ghost-btn" type="button" data-studio-url="${escapeHtml(job.studio_url || "")}">进入 Studio</button>` : ""}
+        ${job.can_open_studio ? `<button class="ghost-btn" type="button" data-studio-url="${escapeHtml(job.studio_url || "")}">进入录音棚</button>` : ""}
         ${job.final_artifact_download_url ? `<button class="ghost-btn" type="button" data-download-url="${escapeHtml(job.final_artifact_download_url)}">下载成品</button>` : ""}
       </div>
     </div>
@@ -2250,7 +2250,7 @@ function renderTrackAssetSummary() {
   summary.textContent = active
     ? `当前曲目正在 ${stageText(active.current_stage || "pending")}，无需手动刷新。`
     : completed
-      ? "最新成品已就绪，可直接进入 Studio 或下载。"
+      ? "最新成品已就绪，可直接进入录音棚 或下载。"
       : "当前曲目可继续整理歌词，或选择模型创建翻唱任务。";
 
   grid.innerHTML = [
@@ -2304,9 +2304,9 @@ function renderTrackDetail() {
   $("factoryTrackMeta").textContent = track
     ? (
       active
-        ? `当前任务正在 ${stageText(active.current_stage || "pending")}，Factory 会自动刷新当前曲目状态。`
+        ? `当前任务正在 ${stageText(active.current_stage || "pending")}，工厂会自动刷新当前曲目状态。`
         : completed
-          ? "最新成品已就绪，可直接进入 Studio 或下载。"
+          ? "最新成品已就绪，可直接进入录音棚 或下载。"
           : isFailedStatus(latest?.status || "")
             ? buildTrackJobSummary(latest)
             : `批次 ${track.batch_name || track.batch_id} · 创建于 ${formatDateTime(track.created_at)}`
@@ -2767,7 +2767,7 @@ async function loadTrack(trackId) {
 async function refreshAll() {
   try {
     stopTrackPolling();
-    setFactoryStatus("正在刷新 Factory 数据", "warning");
+    setFactoryStatus("正在刷新工厂数据", "warning");
     await loadSummary();
     await loadEngines();
     await loadRvcModels();
@@ -2778,10 +2778,10 @@ async function refreshAll() {
     await loadCoverModels();
     await loadBatches({ keepSelection: true });
     if (!activeTrackJob()) {
-      setFactoryStatus("Factory 已同步", "success");
+      setFactoryStatus("工厂已同步", "success");
     }
   } catch (error) {
-    setFactoryStatus("Factory 加载失败", "danger");
+    setFactoryStatus("工厂加载失败", "danger");
     showToast(`Factory 加载失败：${toErrorMessage(error)}`, "error");
   }
 }
@@ -2859,7 +2859,7 @@ async function handleCreateCoverJob() {
     const payload = await postJSON(`/api/tracks/${state.selectedTrackId}/cover-jobs`, {
       model_id: state.selectedCoverModelId,
     });
-    showToast(payload.message || "翻唱任务已创建，Factory 会自动刷新状态", "success");
+    showToast(payload.message || "翻唱任务已创建，工厂会自动刷新状态", "success");
     await loadTrack(state.selectedTrackId);
   } catch (error) {
     showToast(`创建翻唱任务失败：${toErrorMessage(error)}`, "error");
