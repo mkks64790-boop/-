@@ -153,7 +153,7 @@ Do not stage raw audio/model/DB assets.
 - Execution safety group (approval_audit, execution_guard, execution_policy): **fully inlined** into `execution_safety_service.py`. Old 3 files are now small pure reexports. Facade owns the code.
 - Artifact lifecycle + UVR smoke groups: delegation via facade reexports from (headered) legacy impl files. Internal cross-imports among legacy files cleaned to always prefer facades (0 remaining direct stage59-to-stage59 after final review fixes).
 - Facade tests (`test_stage60b_facades.py`), C4b smoke plan tests, identity "is" checks, and `verify_stage59_uvr_ab.py --real-smoke-plan` all green. Governance hard guards (`real_execute_allowed=false`, `audio_files_written=false`) intact.
-- Bundling for training infra (primary RVC + 秋风RVC backup on 7865 + AudioPipeline): complete in code (engine_paths.py prioritizes `external/`, feishark-launcher.ps1 dual launch, voice_changer supports origin="backup" or "秋风" in name + root= sync, engine_manager lists both). `external/` dirs + `scripts/setup_training_engines.ps1` + .gitignore rules present. User action required to copy complete engines (per "准备好了素材" + "秋风rvc作为备用" + "整合完整的进入工作区").
+- Bundling for training infra (primary RVC + 秋风RVC backup on 7865 + AudioPipeline): **code + local disk READY** on dev machine. Sources: `D:\RVC\RVCv2` -> `external/rvc-webui`, `C:\Users\ASUS\AudioPipeline` -> `external/audio-pipeline`, backup instance from primary copy + shared weights junction. Scripts: `scripts/setup_training_engines.ps1`, `scripts/populate_external_engines.ps1`, `scripts/feishark-engine-env.ps1`. Launcher fix: **must use** `D:\Miniconda3\envs\rvc\python.exe` (bundled `external/rvc-webui/venv` is empty — do not use for infer-web.py).
 - No new milestone-named services. No real UVR/RVC. Behavior 100% identical for existing paths.
 
 **Parallel Stage60D DB Governance (started by other plan, per git):**
@@ -161,10 +161,23 @@ Do not stage raw audio/model/DB assets.
 - Work on `backend/db.py`, thin repos, backfill retirement in progress (uncommitted at some handoffs).
 - Align with `docs/governance/stage60-db-governance-plan.md`.
 
+## Stage60 Phase Close (Route A, 2026-06-05)
+
+**Stage60C**: **Declared complete (Option B)** — facades + public migration + execution_safety inline; 10 legacy `stage59_*` remain as headered delegates (no mass delete).
+
+**Local ops validated**:
+- `feishark-launcher.ps1` loads `feishark-engine-env.ps1`, picks Conda `rvc` python, starts 7866/7865/8000.
+- `self_check` CODE_STRUCTURE + RUNTIME **PASS** when `FEISHARK_RVC_PYTHON` points to Conda.
+- Frontend zh-CN committed; studio entry **http://127.0.0.1:8000/** (not 7866).
+
+**Acceptance doc**: `docs/agent-md/handoff/stage-60-phase-close-checklist.md`
+
 **Memory for next agent/GPT:**
-- Use this snapshot + the full `docs/agent-md/worker/stage-60c-shim-removal-report.md` (contains 4-section + Debt Delta + Invariants + Simplification + what "this agent" vs "other plan" each did + review fixes) as primary handoff.
-- Current mode remains governance-only. "不能贪快". Human final owner.
-- Next focus likely: finish/declare Stage60C (more inlining + legacy delete vs accept current state), complete DB governance, populate external/ + validate training with prepared materials + 秋风 backup, then decide feature sprint only after governance sign-off + new ADR.
+- Handoff packet: this snapshot + `stage-60c-shim-removal-report.md` + `stage-60d-db-access-inventory-report.md` + phase-close checklist + `git log -15`.
+- Current mode: governance-only until human signs checklist and GPT aligns memory. "不能贪快". Human final owner.
+- **Next P0 (product)**: small training dry-run with prepared materials (human-approved, not automatic).
+- **Next P1 (governance)**: continue Stage60D DB repo migration per plan.
+- **Do not** `git add .` for `external/` engine trees or runtime assets.
 
 **Key files changed in Stage60C window (recovered):**
 - Facades: backend/services/{short_chain,execution_safety,artifact_lifecycle,uvr_smoke}_service.py (reexports + one full inlining).
