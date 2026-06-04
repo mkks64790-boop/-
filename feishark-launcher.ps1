@@ -1,5 +1,47 @@
 $ErrorActionPreference = "Stop"
 
+function Resolve-RvcPython {
+    param(
+        [string]$RvcDir
+    )
+    $candidates = @()
+    if ($env:FEISHARK_RVC_PYTHON) {
+        $candidates += $env:FEISHARK_RVC_PYTHON
+    }
+    $candidates += @(
+        "D:\Miniconda3\envs\rvc\python.exe",
+        $(if ($RvcDir) { Join-Path $RvcDir "runtime\python.exe" }),
+        $(if ($RvcDir) { Join-Path $RvcDir "venv\Scripts\python.exe" })
+    )
+    $seen = @{}
+    foreach ($candidate in $candidates) {
+        if (-not $candidate -or -not (Test-Path -LiteralPath $candidate)) { continue }
+        if ($seen.ContainsKey($candidate)) { continue }
+        $seen[$candidate] = $true
+        $probe = & $candidate -c "import dotenv, torch; print('ok')" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $probe -eq "ok") {
+            return $candidate
+        }
+    }
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+            return $candidate
+        }
+    }
+    return "python"
+}
+
+function Show-LogTail {
+    param(
+        [string]$Path,
+        [int]$Lines = 12
+    )
+    if (Test-Path -LiteralPath $Path) {
+        Write-Host ("--- tail {0} ---" -f $Path)
+        Get-Content -LiteralPath $Path -Tail $Lines -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+    }
+}
+
 function Test-HttpUrl {
     param(
         [Parameter(Mandatory = $true)]
@@ -45,6 +87,11 @@ $backendDir = Join-Path $projectRoot "backend"
 $logDir = Join-Path $projectRoot "logs"
 $null = New-Item -ItemType Directory -Path $logDir -Force
 
+$engineEnvScript = Join-Path $projectRoot "scripts\feishark-engine-env.ps1"
+if (Test-Path -LiteralPath $engineEnvScript) {
+    . $engineEnvScript
+}
+
 $apiPort = 8000
 $rvcPort = if ($env:FEISHARK_RVC_PORT) { [int]$env:FEISHARK_RVC_PORT } else { 7866 }
 $rvcUrl = "http://127.0.0.1:$rvcPort"
@@ -66,22 +113,7 @@ if (-not $rvcDir) {
     }
 }
 
-$rvcPython = $env:FEISHARK_RVC_PYTHON
-if (-not $rvcPython) {
-    foreach ($candidate in @(
-        $(if ($rvcDir) { Join-Path $rvcDir "runtime\python.exe" }),
-        $(if ($rvcDir) { Join-Path $rvcDir "venv\Scripts\python.exe" }),
-        "D:\Miniconda3\envs\rvc\python.exe"
-    )) {
-        if ($candidate -and (Test-Path $candidate)) {
-            $rvcPython = $candidate
-            break
-        }
-    }
-}
-if (-not $rvcPython) {
-    $rvcPython = "python"
-}
+$rvcPython = Resolve-RvcPython -RvcDir $rvcDir
 
 $env:FEISHARK_RVC_API = $rvcUrl
 $env:FEISHARK_RVC_PORT = "$rvcPort"
@@ -122,10 +154,12 @@ if (Test-HttpUrl -Url "$rvcUrl/gradio_api/info") {
         -RedirectStandardOutput (Join-Path $logDir "rvc.stdout.log") `
         -RedirectStandardError (Join-Path $logDir "rvc.stderr.log")
 
-    if (Wait-HttpUrl -Url "$rvcUrl/gradio_api/info" -TimeoutSeconds 60 -IntervalSeconds 2) {
+    if (Wait-HttpUrl -Url "$rvcUrl/gradio_api/info" -TimeoutSeconds 120 -IntervalSeconds 2) {
         Write-Host "RVC ready"
     } else {
-        Write-Host "RVC start timeout"
+        Write-Host "RVC start timeout (studio UI on :8000 still works; check logs below)"
+        Show-LogTail -Path (Join-Path $logDir "rvc.stderr.log")
+        Write-Host "Tip: RVC needs Conda env D:\Miniconda3\envs\rvc\python.exe (not external\venv)."
     }
 } else {
     Write-Host "RVC WebUI not found. Skip RVC startup."
@@ -145,18 +179,9 @@ if (-not $backupRvcDir) {
         }
     }
 }
-$backupRvcPython = $env:FEISHARK_RVC_BACKUP_PYTHON
-if (-not $backupRvcPython -and $backupRvcDir) {
-    foreach ($candidate in @(
-        $(if ($backupRvcDir) { Join-Path $backupRvcDir "runtime\python.exe" }),
-        $(if ($backupRvcDir) { Join-Path $backupRvcDir "venv\Scripts\python.exe" }),
-        "D:\Miniconda3\envs\rvc\python.exe"
-    )) {
-        if ($candidate -and (Test-Path $candidate)) {
-            $backupRvcPython = $candidate
-            break
-        }
-    }
+$backupRvcPython = if ($env:FEISHARK_RVC_BACKUP_PYTHON) { $env:FEISHARK_RVC_BACKUP_PYTHON } else { Resolve-RvcPython -RvcDir $backupRvcDir }
+if ($backupRvcPython) {
+    $env:FEISHARK_RVC_BACKUP_PYTHON = $backupRvcPython
 }
 if ($backupRvcDir -and (Test-Path (Join-Path $backupRvcDir "infer-web.py"))) {
     if (Test-HttpUrl -Url "$backupRvcUrl/gradio_api/info") {
@@ -170,10 +195,11 @@ if ($backupRvcDir -and (Test-Path (Join-Path $backupRvcDir "infer-web.py"))) {
             -ArgumentList @("infer-web.py", "--pycmd", $(if ($backupRvcPython) { $backupRvcPython } else { "python" }), "--port", "$backupRvcPort", "--noautoopen") `
             -RedirectStandardOutput (Join-Path $logDir "rvc-backup.stdout.log") `
             -RedirectStandardError (Join-Path $logDir "rvc-backup.stderr.log")
-        if (Wait-HttpUrl -Url "$backupRvcUrl/gradio_api/info" -TimeoutSeconds 60 -IntervalSeconds 2) {
+        if (Wait-HttpUrl -Url "$backupRvcUrl/gradio_api/info" -TimeoutSeconds 120 -IntervalSeconds 2) {
             Write-Host "Backup RVC ready"
         } else {
-            Write-Host "Backup RVC start timeout (秋风RVC may need manual start or model load in webui)"
+            Write-Host "Backup RVC start timeout (optional; 秋风 backup can be started later)"
+            Show-LogTail -Path (Join-Path $logDir "rvc-backup.stderr.log")
         }
     }
     $env:FEISHARK_RVC_BACKUP_DIR = $backupRvcDir
