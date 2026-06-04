@@ -72,7 +72,7 @@ python -m pytest tests/unit/ -q -k "stage59c or stage60"
 | Priority | Track | Action |
 |----------|-------|--------|
 | **P0** | Product validation | DONE — see `p0-dry-run-runbook.md` + `stage-60-p0-train-dry-run-report.md` (PASS `train_bfe8d29c6910`) |
-| **P1** | Governance | IN PROGRESS — `asset_service` → `ArtifactRepository` (see `stage-60-p1-asset-repository-migration-report.md`) |
+| **P1** | Governance | IN PROGRESS — `asset_service` + `track_service` → repositories (see `stage-60-p1-asset-repository-migration-report.md`) |
 | **P2** | GPT | Memory alignment: update architect prompts that still say "start Stage60A" |
 | **P3** | Feature | Only after governance sign-off + new ADR |
 

@@ -4,17 +4,33 @@ import json
 import os
 
 try:
-    from ..db import get_connection
+    from ..repositories.artifact_repository import ArtifactRepository
+    from ..repositories.job_repository import JobRepository
+    from ..repositories.track_repository import TrackRepository
     from .asset_service import get_final_job_artifact, get_job_artifact
     from .audit_service import record_audit_event
     from .smoke_filter import explain_test_data_filter_reason, is_test_data_track_record
     from .stage_log_service import list_stage_logs
 except ImportError:
-    from db import get_connection
+    from repositories.artifact_repository import ArtifactRepository
+    from repositories.job_repository import JobRepository
+    from repositories.track_repository import TrackRepository
     from services.asset_service import get_final_job_artifact, get_job_artifact
     from services.audit_service import record_audit_event
     from services.smoke_filter import explain_test_data_filter_reason, is_test_data_track_record
     from services.stage_log_service import list_stage_logs
+
+
+def _track_repo() -> TrackRepository:
+    return TrackRepository()
+
+
+def _job_repo() -> JobRepository:
+    return JobRepository()
+
+
+def _artifact_repo() -> ArtifactRepository:
+    return ArtifactRepository()
 
 
 TRACK_MUTABLE_FIELDS = {
@@ -43,28 +59,12 @@ def _parse_json(raw: str | None, fallback):
 
 
 def get_track(track_id: str) -> dict | None:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            """
-            SELECT
-                t.*,
-                b.batch_name,
-                b.output_root AS batch_output_root
-            FROM tracks t
-            JOIN release_batches b ON b.batch_id = t.batch_id
-            WHERE t.track_id = ?
-            LIMIT 1
-            """,
-            (track_id,),
-        ).fetchone()
-        if not row:
-            return None
-        payload = dict(row)
-        payload["metadata"] = _parse_json(payload.get("metadata_json"), {})
-        return payload
-    finally:
-        conn.close()
+    row = _track_repo().get_with_batch(track_id)
+    if not row:
+        return None
+    payload = dict(row)
+    payload["metadata"] = _parse_json(payload.get("metadata_json"), {})
+    return payload
 
 
 def _resolve_track_artifact(job_id: str, preferred_artifact_id: str = "") -> dict | None:
@@ -271,19 +271,7 @@ def _serialize_track_job(
 
 
 def _set_track_status(track_id: str, status: str) -> None:
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
-            UPDATE tracks
-            SET status = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE track_id = ?
-            """,
-            (status, track_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    _track_repo().update_status(track_id, status)
 
 
 def _track_idle_status(track: dict | None) -> str:
@@ -419,28 +407,9 @@ def get_track_job_entry(track_id: str, job_id: str, preferred_artifact_id: str =
     track = get_track(track_id)
     if not track:
         return None
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            """
-            SELECT
-                j.*,
-                COALESCE(NULLIF(j.voice_name, ''), vm.model_name, '') AS resolved_voice_name
-            FROM jobs j
-            LEFT JOIN voice_models vm
-                ON j.voice_model_id != ''
-               AND (vm.voice_model_id = j.voice_model_id OR vm.legacy_model_id = j.voice_model_id)
-            WHERE COALESCE(j.track_id, '') = ?
-              AND j.job_id = ?
-            LIMIT 1
-            """,
-            (track_id, job_id),
-        ).fetchone()
-        if not row:
-            return None
-        item = dict(row)
-    finally:
-        conn.close()
+    item = _job_repo().get_for_track_with_voice_name(track_id, job_id)
+    if not item:
+        return None
     return _serialize_track_job(
         item,
         track_id=track_id,
@@ -475,31 +444,7 @@ def list_track_studio_versions(track_id: str, limit: int = 50, offset: int = 0) 
     current_master_job_id = track.get("current_master_job_id") or ""
     current_master_artifact_id = track.get("current_master_artifact_id") or ""
 
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            """
-            SELECT
-                a.*,
-                j.job_id AS version_job_id,
-                j.job_type,
-                j.job_kind,
-                j.status AS job_status,
-                j.track_id AS job_track_id
-            FROM job_artifacts a
-            JOIN jobs j ON j.job_id = a.job_id
-            WHERE COALESCE(j.track_id, '') = ?
-              AND COALESCE(j.job_type, '') = 'cover'
-              AND COALESCE(j.job_kind, j.job_type, '') = 'cover'
-              AND COALESCE(j.status, '') IN ('完成', '已完成', 'completed')
-              AND a.artifact_type IN ('cover_master', 'studio_effect_draft_master', 'studio_effect_render_master')
-            ORDER BY datetime(a.created_at) DESC, a.rowid DESC
-            LIMIT ? OFFSET ?
-            """,
-            (track_id, limit, offset),
-        ).fetchall()
-    finally:
-        conn.close()
+    rows = _artifact_repo().list_studio_versions_for_track(track_id, limit=limit, offset=offset)
 
     items = []
     for row in rows:
@@ -541,21 +486,7 @@ def set_track_current_master(track_id: str, job_id: str, artifact_id: str = "") 
     if not track:
         return None
 
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
-            UPDATE tracks
-            SET current_master_job_id = ?,
-                current_master_artifact_id = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE track_id = ?
-            """,
-            (job_id, artifact_id or "", track_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    _track_repo().set_current_master(track_id, job_id, artifact_id or "")
 
     record_audit_event(
         "track",
@@ -576,26 +507,7 @@ def list_track_jobs(track_id: str, limit: int = 20, offset: int = 0) -> list[dic
     batch_id = track.get("batch_id") if track else ""
     current_master_job_id = track.get("current_master_job_id") if track else ""
     current_master_artifact_id = track.get("current_master_artifact_id") if track else ""
-    conn = get_connection()
-    try:
-        rows = conn.execute(
-            """
-            SELECT
-                j.*,
-                COALESCE(NULLIF(j.voice_name, ''), vm.model_name, '') AS resolved_voice_name
-            FROM jobs j
-            LEFT JOIN voice_models vm
-                ON j.voice_model_id != ''
-               AND (vm.voice_model_id = j.voice_model_id OR vm.legacy_model_id = j.voice_model_id)
-            WHERE COALESCE(j.track_id, '') = ?
-            ORDER BY datetime(j.created_at) DESC, j.rowid DESC
-            LIMIT ? OFFSET ?
-            """,
-            (track_id, limit, offset),
-        ).fetchall()
-        items = [dict(row) for row in rows]
-    finally:
-        conn.close()
+    items = _job_repo().list_for_track_with_voice_name(track_id, limit=limit, offset=offset)
 
     payload: list[dict] = []
     for item in items:
@@ -621,57 +533,33 @@ def list_tracks(
     include_smoke: bool = False,
     include_test_data: bool = False,
 ) -> list[dict]:
-    conn = get_connection()
-    try:
-        query = "SELECT * FROM tracks WHERE 1=1"
-        params: list[object] = []
-        if batch_id:
-            query += " AND batch_id = ?"
-            params.append(batch_id)
-        query += " ORDER BY datetime(created_at) DESC, rowid DESC"
-        rows = conn.execute(query, tuple(params)).fetchall()
-        items = [dict(row) for row in rows]
-        batch_rows = {
-            row["batch_id"]: dict(row)
-            for row in conn.execute("SELECT * FROM release_batches").fetchall()
-        }
-        include_filtered = bool(include_smoke or include_test_data)
-        if not include_filtered:
-            items = [
-                item for item in items
-                if not is_test_data_track_record(item, batch_rows.get(item.get("batch_id") or ""))
-            ]
-        else:
-            for item in items:
-                reason = explain_test_data_filter_reason(item, kind="track")
-                if not reason:
-                    reason = explain_test_data_filter_reason(batch_rows.get(item.get("batch_id") or ""), kind="batch")
-                if reason:
-                    item["filter_reason"] = reason
-        return items[offset: offset + limit]
-    finally:
-        conn.close()
+    repo = _track_repo()
+    items = repo.list_all(batch_id=batch_id)
+    batch_rows = repo.release_batches_by_id()
+    include_filtered = bool(include_smoke or include_test_data)
+    if not include_filtered:
+        items = [
+            item for item in items
+            if not is_test_data_track_record(item, batch_rows.get(item.get("batch_id") or ""))
+        ]
+    else:
+        for item in items:
+            reason = explain_test_data_filter_reason(item, kind="track")
+            if not reason:
+                reason = explain_test_data_filter_reason(batch_rows.get(item.get("batch_id") or ""), kind="batch")
+            if reason:
+                item["filter_reason"] = reason
+    return items[offset: offset + limit]
 
 
 def hidden_test_track_count(batch_id: str | None = None) -> int:
-    conn = get_connection()
-    try:
-        query = "SELECT * FROM tracks WHERE 1=1"
-        params: list[object] = []
-        if batch_id:
-            query += " AND batch_id = ?"
-            params.append(batch_id)
-        rows = [dict(row) for row in conn.execute(query, tuple(params)).fetchall()]
-        batch_rows = {
-            row["batch_id"]: dict(row)
-            for row in conn.execute("SELECT * FROM release_batches").fetchall()
-        }
-        return sum(
-            1 for row in rows
-            if is_test_data_track_record(row, batch_rows.get(row.get("batch_id") or ""))
-        )
-    finally:
-        conn.close()
+    repo = _track_repo()
+    rows = repo.list_all(batch_id=batch_id)
+    batch_rows = repo.release_batches_by_id()
+    return sum(
+        1 for row in rows
+        if is_test_data_track_record(row, batch_rows.get(row.get("batch_id") or ""))
+    )
 
 
 def update_track(track_id: str, payload: dict) -> dict | None:
@@ -679,38 +567,9 @@ def update_track(track_id: str, payload: dict) -> dict | None:
     if not updates:
         return get_track(track_id)
 
-    columns = ", ".join(f"{field} = ?" for field in updates)
-    params = list(updates.values()) + [track_id]
-
-    conn = get_connection()
-    try:
-        conn.execute(
-            f"""
-            UPDATE tracks
-            SET {columns}, updated_at = CURRENT_TIMESTAMP
-            WHERE track_id = ?
-            """,
-            tuple(params),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    _track_repo().update_fields(track_id, updates)
     return get_track(track_id)
 
 
 def set_track_current_lyrics(track_id: str, lyric_document_id: str | None = None, timeline_id: str | None = None) -> None:
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
-            UPDATE tracks
-            SET current_lyric_document_id = COALESCE(?, current_lyric_document_id),
-                current_timeline_version_id = COALESCE(?, current_timeline_version_id),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE track_id = ?
-            """,
-            (lyric_document_id, timeline_id, track_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    _track_repo().set_current_lyrics(track_id, lyric_document_id, timeline_id)

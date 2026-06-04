@@ -19,6 +19,10 @@ python -m pytest tests/unit/ -q -k "stage59c or stage60"  → 101 passed
 python -m pytest tests/api/test_stage49_listening_review_api.py tests/api/test_stage59a_asset_lifecycle_api.py -q → passed
 ```
 
+## Follow-up (same sprint)
+
+- `track_service.py` → `TrackRepository` + `JobRepository` + `ArtifactRepository` (zero `get_connection()` in service).
+
 ## Debt
 
-- Other services still use direct `get_connection()` (track, batch, lyric, etc.) — next P1 slices per inventory.
+- Other services still use direct `get_connection()` (batch, lyric, dataset, etc.) — next P1 slices per inventory.

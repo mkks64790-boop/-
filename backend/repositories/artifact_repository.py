@@ -333,6 +333,38 @@ class ArtifactRepository:
         finally:
             self._close_conn(conn)
 
+    def list_studio_versions_for_track(
+        self, track_id: str, limit: int = 50, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    a.*,
+                    j.job_id AS version_job_id,
+                    j.job_type,
+                    j.job_kind,
+                    j.status AS job_status,
+                    j.track_id AS job_track_id
+                FROM job_artifacts a
+                JOIN jobs j ON j.job_id = a.job_id
+                WHERE COALESCE(j.track_id, '') = ?
+                  AND COALESCE(j.job_type, '') = 'cover'
+                  AND COALESCE(j.job_kind, j.job_type, '') = 'cover'
+                  AND COALESCE(j.status, '') IN ('完成', '已完成', 'completed')
+                  AND a.artifact_type IN (
+                      'cover_master', 'studio_effect_draft_master', 'studio_effect_render_master'
+                  )
+                ORDER BY datetime(a.created_at) DESC, a.rowid DESC
+                LIMIT ? OFFSET ?
+                """,
+                (track_id, limit, offset),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            self._close_conn(conn)
+
     def list_final_cover_master_with_track(self) -> list[dict[str, Any]]:
         conn = self._get_conn()
         try:

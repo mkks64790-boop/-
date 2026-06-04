@@ -322,3 +322,49 @@ class JobRepository:
     def get_row(self, job_id: str) -> dict[str, Any] | None:
         """Compat alias for get with flexible lookup."""
         return self.get(job_id)
+
+    def get_for_track_with_voice_name(self, track_id: str, job_id: str) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """
+                SELECT
+                    j.*,
+                    COALESCE(NULLIF(j.voice_name, ''), vm.model_name, '') AS resolved_voice_name
+                FROM jobs j
+                LEFT JOIN voice_models vm
+                    ON j.voice_model_id != ''
+                   AND (vm.voice_model_id = j.voice_model_id OR vm.legacy_model_id = j.voice_model_id)
+                WHERE COALESCE(j.track_id, '') = ?
+                  AND j.job_id = ?
+                LIMIT 1
+                """,
+                (track_id, job_id),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            self._close_conn(conn)
+
+    def list_for_track_with_voice_name(
+        self, track_id: str, limit: int = 20, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    j.*,
+                    COALESCE(NULLIF(j.voice_name, ''), vm.model_name, '') AS resolved_voice_name
+                FROM jobs j
+                LEFT JOIN voice_models vm
+                    ON j.voice_model_id != ''
+                   AND (vm.voice_model_id = j.voice_model_id OR vm.legacy_model_id = j.voice_model_id)
+                WHERE COALESCE(j.track_id, '') = ?
+                ORDER BY datetime(j.created_at) DESC, j.rowid DESC
+                LIMIT ? OFFSET ?
+                """,
+                (track_id, limit, offset),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            self._close_conn(conn)

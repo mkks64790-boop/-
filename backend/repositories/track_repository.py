@@ -146,16 +146,85 @@ class TrackRepository:
             self._close_conn(conn)
 
     # Cover job marker helpers (thin, logic may live in track_service for now)
-    def mark_cover_job_state(
-        self, track_id: str, job_id: str, state: str, model_id: str = "", voice_name: str = ""
+    def get_with_batch(self, track_id: str) -> dict[str, Any] | None:
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """
+                SELECT
+                    t.*,
+                    b.batch_name,
+                    b.output_root AS batch_output_root
+                FROM tracks t
+                JOIN release_batches b ON b.batch_id = t.batch_id
+                WHERE t.track_id = ?
+                LIMIT 1
+                """,
+                (track_id,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            self._close_conn(conn)
+
+    def list_all(self, batch_id: str | None = None) -> list[dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            query = "SELECT * FROM tracks WHERE 1=1"
+            params: list[Any] = []
+            if batch_id:
+                query += " AND batch_id = ?"
+                params.append(batch_id)
+            query += " ORDER BY datetime(created_at) DESC, rowid DESC"
+            rows = conn.execute(query, tuple(params)).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            self._close_conn(conn)
+
+    def release_batches_by_id(self) -> dict[str, dict[str, Any]]:
+        conn = self._get_conn()
+        try:
+            rows = conn.execute("SELECT * FROM release_batches").fetchall()
+            return {row["batch_id"]: dict(row) for row in rows}
+        finally:
+            self._close_conn(conn)
+
+    def update_fields(self, track_id: str, fields: dict[str, Any]) -> bool:
+        if not fields:
+            return False
+        columns = ", ".join(f"{key} = ?" for key in fields)
+        params = list(fields.values()) + [track_id]
+        conn = self._get_conn()
+        try:
+            cur = conn.execute(
+                f"""
+                UPDATE tracks
+                SET {columns}, updated_at = CURRENT_TIMESTAMP
+                WHERE track_id = ?
+                """,
+                params,
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            self._close_conn(conn)
+
+    def set_current_lyrics(
+        self,
+        track_id: str,
+        lyric_document_id: str | None = None,
+        timeline_id: str | None = None,
     ) -> None:
-        # For now just touch updated; detailed marker fields may be in job or separate.
-        # Keep thin: service can use for status side effects if needed.
         conn = self._get_conn()
         try:
             conn.execute(
-                "UPDATE tracks SET updated_at = CURRENT_TIMESTAMP WHERE track_id = ?",
-                (track_id,),
+                """
+                UPDATE tracks
+                SET current_lyric_document_id = COALESCE(?, current_lyric_document_id),
+                    current_timeline_version_id = COALESCE(?, current_timeline_version_id),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE track_id = ?
+                """,
+                (lyric_document_id, timeline_id, track_id),
             )
             conn.commit()
         finally:
