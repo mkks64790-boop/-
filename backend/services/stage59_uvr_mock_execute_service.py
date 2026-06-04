@@ -12,11 +12,9 @@ from backend.services.short_chain_manifest_service import resolve_safe_manifest_
 from backend.services.short_chain_uvr_service import evaluate_uvr_ab_readiness
 from .artifact_lifecycle_service import (
     STAGE_LABEL,
-    build_listening_contract,
-)
-from .stage59_transient_artifact_service import (
     REQUIRES_LATER_DB_INTEGRATION,
     attach_listening_contract,
+    build_listening_contract,
     register_transient_uvr_artifacts,
 )
 
@@ -75,7 +73,7 @@ def mock_execute_uvr_ab(
         clip_seconds=clip_seconds,
         manifest_path=manifest_str,
     )
-    from .stage59_transient_artifact_service import get_transient_run
+    from .artifact_lifecycle_service import get_transient_run
 
     run_snapshot = get_transient_run(safe_run_id) or {}
     persistence_contract = run_snapshot.get("artifact_persistence_contract")

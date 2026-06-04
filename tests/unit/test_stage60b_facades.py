@@ -22,3 +22,41 @@ def test_stage60b_facades_delegate_to_existing_implementations():
 
     assert safety.evaluate_execution_policy is old_policy.evaluate_execution_policy
     assert smoke.evaluate_real_smoke_plan is old_smoke.evaluate_real_smoke_plan
+
+
+# Stage60 DB Governance Phase 3: basic repo facade smoke (added per task; uses existing test file)
+def test_stage60_db_repositories_import_and_basic_contract():
+    from backend.repositories import (
+        JobRepository,
+        VoiceModelRepository,
+        ArtifactRepository,
+        TrackRepository,
+        MaterialRepository,
+    )
+
+    assert JobRepository
+    assert VoiceModelRepository
+    assert ArtifactRepository
+    assert TrackRepository
+    assert MaterialRepository
+
+    # instantiate (conn optional)
+    jr = JobRepository()
+    vmr = VoiceModelRepository()
+    ar = ArtifactRepository()
+    tr = TrackRepository()
+    mr = MaterialRepository()
+    assert hasattr(jr, "upsert")
+    assert hasattr(jr, "update_status")
+    assert hasattr(jr, "get_next_pending")
+    assert hasattr(vmr, "upsert")
+    assert hasattr(vmr, "find_by_name_or_path")
+    assert hasattr(ar, "list_for_job")
+    assert hasattr(ar, "upsert_artifact")
+    assert hasattr(tr, "upsert_track")
+    assert hasattr(mr, "upsert_asset")
+
+    # optional conn injection shape
+    import sqlite3
+    # can't easily open mem without schema, just check accepts
+    assert JobRepository(conn=None) is not None

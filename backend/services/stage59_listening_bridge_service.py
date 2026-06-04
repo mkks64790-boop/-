@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.services.stage59_artifact_persistence_service import CONTRACT_SCHEMA
+from backend.services.artifact_lifecycle_service import CONTRACT_SCHEMA
 
 LISTENING_BRIDGE_SCHEMA = "stage59_uvr_listening_bridge_v2"
 STAGE49_COMPATIBLE_SCHEMA = "stage49_listening_review_v1"

@@ -1,15 +1,15 @@
 """
 Stage59C-2/4a — run-scoped UVR artifact metadata (persistence-ready; no physical files).
 
-Delegates contract shape to ``stage59_artifact_persistence_service``. In-memory store until
-real smoke files exist and ``register_job_artifact`` can run.
+Delegates contract shape via the durable ``artifact_lifecycle_service`` facade (Stage60C).
+Legacy direct stage59_* imports cleaned. In-memory store until real smoke files exist.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from backend.services.stage59_artifact_persistence_service import (
+from backend.services.artifact_lifecycle_service import (
     REQUIRES_LATER_DB_INTEGRATION as ARTIFACTS_REQUIRE_LATER_DB_INTEGRATION,
     STAGE_LABEL,
     build_mock_uvr_artifact_contracts,
@@ -18,7 +18,7 @@ from backend.services.stage59_artifact_persistence_service import (
     get_run_artifact_contract,
     store_run_artifact_contract,
 )
-from backend.services.stage59_job_artifact_promotion_service import (
+from backend.services.artifact_lifecycle_service import (
     build_job_artifact_promotion_plan,
 )
 
