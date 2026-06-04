@@ -104,9 +104,9 @@ High-priority cleanup targets:
 
 ### Phase 4: Backfill Retirement
 
-- Move historical backfills out of startup.
-- Add explicit verifier scripts for one-time backfills.
-- Startup must not perform unbounded data rewrites.
+- Move historical backfills out of startup. **COMPLETED** (Phase 4 sub-agent).
+- Add explicit verifier scripts for one-time backfills. **DONE** (5 scripts in scripts/verify_backfill_*.py).
+- Startup must not perform unbounded data rewrites. **ACHIEVED** (init_db now minimal).
 
 ## Acceptance Criteria
 

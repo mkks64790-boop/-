@@ -54,6 +54,8 @@
 
 **治理目标**：产出清晰的淘汰路线图（先只读兼容 → 迁移工具 → 最终移除）。
 
+**Phase 4 更新 (Stage60D)**: Backfill retirement from startup completed (verifiers + init_db cleanup + docs). Dual-writes still active for compat (gradual retirement per legacy map).
+
 ## 建议的 Stage60 产出
 
 1. Stage59 服务合并设计文档（哪些可以并入 short_chain_manifest / artifact / job 核心）。

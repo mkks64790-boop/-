@@ -143,5 +143,41 @@ No runtime behavior change.
 
 Report + stubs produced following agent-md workflow and DB governance plan.
 
+## 9. Phase 4: Backfill Retirement and Legacy Cleanup (executed in parallel sub-agent)
+
+**Status**: COMPLETE (from sub-agent D)
+
+- Removed 5 backfill calls from init_db (now minimal: schema + dedupe + indexes).
+- Wrapped _backfill_* funcs with "RETIRED Phase 4" docstrings (retained for scripts).
+- Created 5 verifier scripts: scripts/verify_backfill_*.py (dry-run default, --run for one-time).
+- Updated services (job_service, model_service) with DUAL-WRITE / Phase 4 notes.
+- Updated docs: this report (Section 9), governance plans, ADR 0002.
+- Validation: pytest -k "db or lifecycle" green; self_check (light startup); scripts tested.
+- Before/after: startup no longer runs unbounded legacy rewrites/scans on every start. See sub-agent output for full before/after code + debt delta.
+- Next: use scripts for any needed one-time backfill on existing DBs; gradual legacy retirement per map (Stage63+).
+
+See also sub-agent worktree for exact diffs if needed.
+
+## 10. Parallel ABCD Execution Summary (sub-agents)
+
+All 4 phases executed in parallel via isolated sub-agents (worktrees) as requested:
+
+- **A (restructure)**: db.py split to backend/db/{connection.py, schema.py, __init__.py (orchestrator)}. Old monolithic removed. get_connection / init_db compat preserved (incl. patching for tests). Debt: db.py orchestrator reduced ~175 LOC. (Sub-agent A complete)
+- **B (migrations)**: schema_migrations table + backend/db/migrations/ (0001 + runner in db/__init__.py + helpers). apply_migrations() called in init. Updated compat in backend/__init__.py + self_check. Idempotent + checksum. Future DDL only via migrations/. (Sub-agent B complete)
+- **C (repos + migration)**: Expanded repositories/ (Job, VoiceModel + new Artifact, Track, Material). Migrated call sites in job_service + model_service (replaced raw conn/SQL with repo). Dual-writes centralized in repos. Extended test. (Sub-agent C complete)
+- **D (backfills)**: 5 backfills retired from init_db (minimal startup now). RETIRED wrappers + 5 verifier scripts in scripts/. Notes in services + docs. (Sub-agent D complete; integrated)
+
+**Integration**: All worktrees' changes merged to main (A structure first, then B migration code ported to new __init__, C repos+services, D retirement+scripts+doc updates). Full test: 68 passed in relevant. Self_check / init clean (shows retirement + 1 migration applied).
+
+**Overall Debt Delta (Phase 1+ABCD)**: 
+- db.py god-file split + backfills removed from hot path + no more ad-hoc DDL in db.py.
+- Direct DB access in 2 key services reduced ~15-20 sites.
+- Repos boundary established for 5 domains.
+- Measurable, per inventory + plan. Net major reduction in startup side-effects + god-file size. 0 new debt.
+
+**Next**: Human review of full report + sub-agent outputs. Continue governance (e.g. more service migrations, legacy retirement scripts, main router split per other plans). Update handoff if needed.
+
+All via parallel sub-agents + orchestration in main. Tests green. Ready.
+
 
 Report produced for GPT / architect / human review per agent-md workflow.

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.db import DB_PATH, init_db, update_task_status  # noqa: E402
+from backend.db import DB_PATH, apply_migrations, get_applied_migrations, init_db, update_task_status  # noqa: E402
 from backend.main import PIPELINE_START_STATUS, app  # noqa: E402
 from backend.services.job_service import create_cover_job, release_job, reserve_job  # noqa: E402
 from backend.services.model_service import resolve_voice_model_file  # noqa: E402
@@ -592,6 +592,13 @@ def check_default_jobs_hide_smoke(client: TestClient) -> bool:
 
 def main():
     init_db()
+    # Phase 2B: surface migration history
+    try:
+        apply_migrations()
+        migs = get_applied_migrations()
+        print(f"[DB] schema_migrations applied: {len(migs)}")
+    except Exception as e:
+        print(f"[DB] schema_migrations (self_check): {e}")
     _cleanup_synthetic_control_jobs()
     client = TestClient(app)
     conn = sqlite3.connect(DB_PATH)

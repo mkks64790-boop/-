@@ -3,11 +3,15 @@ import os
 import uuid
 
 try:
-    from ..db import get_connection
+    from ..db import get_connection  # kept only for _load_train_source_context legacy job query compat during transition; prefer repo
+    from ..repositories.job_repository import JobRepository
+    from ..repositories.voice_model_repository import VoiceModelRepository
     from .lifecycle_service import enrich_voice_model, infer_voice_model_lifecycle, should_default_hide_lifecycle
     from .smoke_filter import explain_test_data_filter_reason, is_smoke_model_record
 except ImportError:
-    from db import get_connection
+    from db import get_connection  # kept only for _load_train_source_context legacy job query compat during transition; prefer repo
+    from repositories.job_repository import JobRepository
+    from repositories.voice_model_repository import VoiceModelRepository
     from services.lifecycle_service import enrich_voice_model, infer_voice_model_lifecycle, should_default_hide_lifecycle
     from services.smoke_filter import explain_test_data_filter_reason, is_smoke_model_record
 
@@ -73,6 +77,10 @@ def _as_abs_path(path: str, project_root: str) -> str:
 
 
 def _sync_legacy_voice_asset(model_id: str, model_name: str, pth_path: str, index_path: str, default_pitch: int):
+    # Dual write absorbed into VoiceModelRepository.upsert for Phase 3.
+    # This shim kept only for any external direct callers during transition (thin compat).
+    vm_repo = VoiceModelRepository()
+    # Note: upsert would do full, here just the legacy part if needed standalone.
     conn = get_connection()
     try:
         conn.execute(
@@ -169,12 +177,12 @@ def _load_train_source_context(source_job_id: str) -> dict:
     if not source_job_id:
         return {}
 
+    # Use JobRepository for job part (reduces direct conn/execute in model_service)
+    job_repo = JobRepository()
+    job_row_dict = job_repo.get(source_job_id)
+    # datasets query kept direct (DatasetRepository not in scope for this migration phase)
     conn = get_connection()
     try:
-        job_row = conn.execute(
-            "SELECT * FROM jobs WHERE job_id = ? OR legacy_task_id = ? LIMIT 1",
-            (source_job_id, source_job_id),
-        ).fetchone()
         dataset_row = conn.execute(
             """
             SELECT *
@@ -188,7 +196,7 @@ def _load_train_source_context(source_job_id: str) -> dict:
     finally:
         conn.close()
 
-    job = dict(job_row) if job_row else {}
+    job = job_row_dict or {}
     dataset = dict(dataset_row) if dataset_row else {}
     job_metadata = _parse_json_object(job.get("metadata_json"))
     dataset_metadata = _parse_json_object(dataset.get("metadata_json"))
@@ -334,71 +342,34 @@ def upsert_voice_model(
             "metadata_json": json.dumps(metadata_payload, ensure_ascii=False),
         }
     )
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO voice_models (
-                voice_model_id, legacy_model_id, model_name, source_job_id,
-                pth_path, index_path, default_pitch, status, lifecycle_state, metadata_json,
-                created_at, updated_at
-            ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                COALESCE((SELECT created_at FROM voice_models WHERE voice_model_id = ?), CURRENT_TIMESTAMP),
-                CURRENT_TIMESTAMP
-            )
-            """,
-            (
-                voice_model_id,
-                legacy_model_id,
-                model_name,
-                source_job_id,
-                pth_path,
-                index_path,
-                default_pitch,
-                status,
-                lifecycle_state,
-                json.dumps(metadata_payload, ensure_ascii=False),
-                voice_model_id,
-            ),
-        )
-        conn.commit()
-        _sync_legacy_voice_asset(voice_model_id, model_name, pth_path, index_path, default_pitch)
-        return voice_model_id
-    finally:
-        conn.close()
+    # Use VoiceModelRepository: central upsert + dual write to voice_assets (replaces direct conn + _sync)
+    vm_repo = VoiceModelRepository()
+    return vm_repo.upsert(
+        voice_model_id=voice_model_id,
+        model_name=model_name,
+        pth_path=pth_path,
+        index_path=index_path,
+        default_pitch=default_pitch,
+        source_job_id=source_job_id or "",
+        legacy_model_id=legacy_model_id,
+        status=status,
+        metadata=metadata_payload,
+        lifecycle_state=lifecycle_state,
+    )
 
 
 def get_voice_model(model_id: str) -> dict | None:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT * FROM voice_models WHERE voice_model_id = ? OR legacy_model_id = ? LIMIT 1",
-            (model_id, model_id),
-        ).fetchone()
-        return dict(row) if row else None
-    finally:
-        conn.close()
+    # Migrated to repo
+    vm_repo = VoiceModelRepository()
+    return vm_repo.get(model_id)
 
 
 def get_voice_model_by_source_job(source_job_id: str, project_root: str, weights_dir: str) -> dict | None:
     if not source_job_id:
         return None
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            """
-            SELECT voice_model_id, legacy_model_id
-            FROM voice_models
-            WHERE source_job_id = ?
-            ORDER BY datetime(updated_at) DESC, rowid DESC
-            LIMIT 1
-            """,
-            (source_job_id,),
-        ).fetchone()
-    finally:
-        conn.close()
-
+    # Use repo
+    vm_repo = VoiceModelRepository()
+    row = vm_repo.get_by_source_job(source_job_id)
     if not row:
         return None
     return get_voice_model_detail(row["legacy_model_id"] or row["voice_model_id"], project_root, weights_dir)
@@ -456,20 +427,13 @@ def list_models(
     include_smoke: bool = False,
     include_test_data: bool = False,
 ) -> list[dict]:
-    conn = get_connection()
-    try:
-        include_filtered = bool(include_smoke or include_test_data)
-        query = "SELECT * FROM voice_models"
-        if not include_filtered:
-            query += " WHERE COALESCE(lifecycle_state, 'active') NOT IN ('test_data', 'purged')"
-        query += " ORDER BY datetime(created_at), rowid"
-        rows = conn.execute(query).fetchall()
-    finally:
-        conn.close()
+    # Migrated to VoiceModelRepository (replaces direct conn list)
+    vm_repo = VoiceModelRepository()
+    include_filtered = bool(include_smoke or include_test_data)
+    rows = vm_repo.list(limit=10000, include_inactive=include_filtered)
 
     result = []
-    for row in rows:
-        row_dict = dict(row)
+    for row_dict in rows:
         filter_reason = explain_test_data_filter_reason(row_dict, kind="model")
         if not include_filtered and filter_reason:
             continue
@@ -479,7 +443,7 @@ def list_models(
             row_dict,
             project_root,
             weights_dir,
-            resolved=resolve_voice_model_file(row["legacy_model_id"] or row["voice_model_id"], project_root, weights_dir),
+            resolved=resolve_voice_model_file(row_dict.get("legacy_model_id") or row_dict.get("voice_model_id"), project_root, weights_dir),
         )
         item = {
             "exists": True,
@@ -554,19 +518,10 @@ def import_voice_model(
     origin_kind: str = "imported_external",
     metadata_extra: dict | None = None,
 ) -> dict:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            """
-            SELECT voice_model_id, legacy_model_id
-            FROM voice_models
-            WHERE model_name = ? OR pth_path = ?
-            LIMIT 1
-            """,
-            (model_name, _normalize_path(pth_path, project_root) if project_root else pth_path),
-        ).fetchone()
-    finally:
-        conn.close()
+    # Use repo for dedup check (eliminates last direct conn.execute in import path)
+    vm_repo = VoiceModelRepository()
+    norm_pth = _normalize_path(pth_path, project_root) if project_root else pth_path
+    row = vm_repo.find_by_name_or_path(model_name, norm_pth)
 
     model_id = (row["legacy_model_id"] or row["voice_model_id"]) if row else f"vm_{uuid.uuid4().hex[:8]}"
     stored_pth = _normalize_path(pth_path, project_root) if project_root else pth_path

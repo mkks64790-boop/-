@@ -43,6 +43,14 @@ def init_db():
         print(f"[OK] 数据库初始化完成: {DB_PATH}")
         print(f"     tasks 表: {conn.execute('SELECT COUNT(*) FROM tasks').fetchone()[0]} 条记录")
         print(f"     voice_assets 表: {conn.execute('SELECT COUNT(*) FROM voice_assets').fetchone()[0]} 条记录")
+        # Phase 2B compat: schema_migrations
+        try:
+            from .db import apply_migrations, get_applied_migrations
+            apply_migrations()
+            migs = get_applied_migrations()
+            print(f"     schema_migrations: {len(migs)} applied")
+        except Exception as e:
+            print(f"     [WARN] schema_migrations (compat): {e}")
     finally:
         conn.close()
 
