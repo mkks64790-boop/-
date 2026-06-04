@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 # Stage60 durable facade for UVR A/B mock execution and real-smoke planning.
-# Real execution remains blocked by the delegated Stage59 runner contract.
+# Real execution remains blocked.
+# Old stage59_* files are now legacy shims. Internal references cleaned.
 
 from .stage59_real_smoke_plan_service import (
     REAL_SMOKE_NOT_EXECUTED_REASON,

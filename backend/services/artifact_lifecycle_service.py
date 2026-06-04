@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 # Stage60 durable facade for artifact contracts, transient records, listening metadata,
-# and file-backed promotion planning. Old Stage59 modules remain the implementation.
+# and file-backed promotion planning.
+# Old stage59_* files are now legacy shims (re-export from this facade).
+# Internal cross references updated to go through facade where possible.
 
 from .stage59_artifact_persistence_service import (
     CANONICAL_STORE,
     CONTRACT_SCHEMA,
     DEFAULT_LIFECYCLE,
     REQUIRES_LATER_DB_INTEGRATION,
+    STAGE_LABEL,
     UVR_ARTIFACT_KINDS,
     build_artifact_contract_record,
     build_file_backed_uvr_artifact_contracts,
@@ -21,26 +24,12 @@ from .stage59_artifact_persistence_service import (
     store_run_artifact_contract,
     validate_artifact_contract_record,
 )
-from .stage59_job_artifact_promotion_service import (
-    REGISTER_REQUIRES_PHYSICAL_FILE,
-    build_job_artifact_promotion_plan,
-    promote_file_backed_uvr_artifacts,
-)
-from .stage59_listening_bridge_service import (
-    LISTENING_BRIDGE_SCHEMA,
-    METADATA_ONLY_REASON,
-    STAGE49_COMPATIBLE_SCHEMA,
-    build_listening_contract,
-    get_listening_contract_for_run,
-)
-from .stage59_transient_artifact_service import (
-    attach_listening_contract,
-    clear_transient_store,
-    get_artifact_contract_for_run,
-    get_transient_run,
-    list_transient_artifact_records,
-    register_transient_uvr_artifacts,
-)
+# job promotion symbols provided via lazy if needed
+# (job promotion now imports from this facade)
+# listening symbols provided via lazy to avoid cycle
+# (listening now imports from this facade)
+# transient symbols provided via lazy __getattr__ below to avoid cycle
+# (transient now imports from this facade)
 
 
 __all__ = [
@@ -52,6 +41,7 @@ __all__ = [
     "REGISTER_REQUIRES_PHYSICAL_FILE",
     "REQUIRES_LATER_DB_INTEGRATION",
     "STAGE49_COMPATIBLE_SCHEMA",
+    "STAGE_LABEL",
     "UVR_ARTIFACT_KINDS",
     "attach_listening_contract",
     "build_artifact_contract_record",
@@ -83,6 +73,7 @@ def __getattr__(name):
         "CONTRACT_SCHEMA",
         "DEFAULT_LIFECYCLE",
         "REQUIRES_LATER_DB_INTEGRATION",
+        "STAGE_LABEL",
         "UVR_ARTIFACT_KINDS",
         "build_artifact_contract_record",
         "build_file_backed_uvr_artifact_contracts",
@@ -101,6 +92,7 @@ def __getattr__(name):
             CONTRACT_SCHEMA,
             DEFAULT_LIFECYCLE,
             REQUIRES_LATER_DB_INTEGRATION,
+            STAGE_LABEL,
             UVR_ARTIFACT_KINDS,
             build_artifact_contract_record,
             build_file_backed_uvr_artifact_contracts,

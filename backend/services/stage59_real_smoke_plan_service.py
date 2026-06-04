@@ -1,9 +1,8 @@
 ﻿"""
-Stage59C-4b real-smoke plan service (plan-only safety bridge).
+Legacy shim/impl holder for Stage59C-4b real-smoke plan (Stage60C transition).
 
-Holds the implementation as legacy location during Stage60 governance transition.
-The durable facade (uvr_smoke_service) re-exports these symbols.
-All new call sites should prefer the facade.
+The durable facade (uvr_smoke_service) re-exports.
+All new code should import from the facade.
 """
 
 from __future__ import annotations
@@ -12,13 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from .short_chain_manifest_service import load_manifest
-from .stage59_artifact_persistence_service import (
+from .artifact_lifecycle_service import (
     build_mock_uvr_artifact_contracts,
     safe_runtime_run_id,
 )
-from .stage59_execution_guard_service import evaluate_execution_guards
-from .stage59_execution_policy_service import (
+from .execution_safety_service import (
     REAL_RUNNER_NOT_ENABLED_REASON,
+    evaluate_execution_guards,
     evaluate_execution_policy,
 )
 

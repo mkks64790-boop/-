@@ -1,7 +1,9 @@
 """
-Stage59C-4a — dry promotion plan for future real-smoke UVR stems → ``job_artifacts``.
+Legacy shim for Stage59C-4a job artifact promotion (Stage60C transition).
 
-Does not call ``register_job_artifact`` in this stage (physical file required).
+All new code must import from the durable facade:
+    from backend.services.artifact_lifecycle_service import build_job_artifact_promotion_plan, ...
+
 """
 
 from __future__ import annotations
@@ -10,7 +12,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from backend.services.stage59_artifact_persistence_service import (
+from .artifact_lifecycle_service import (
     UVR_ARTIFACT_KINDS,
     validate_artifact_contract_record,
 )

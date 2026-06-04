@@ -1,5 +1,7 @@
 """
-Stage59C-2/4a — Stage49-compatible listening A/B bridge for mock UVR execute.
+Legacy shim for Stage59C-2/4a listening bridge (Stage60C transition).
+
+New code should import from artifact_lifecycle_service facade.
 """
 
 from __future__ import annotations

@@ -1,8 +1,10 @@
 """
-Stage59C-4a — persistence-ready UVR artifact contract (metadata-only; no DB write).
+Legacy shim for Stage59C-4a artifact persistence (Stage60C transition).
 
-``register_job_artifact`` requires ``os.path.exists``; mock/smoke stems use this contract
-until real files exist under ``shared_data/stage59_runtime/<run_id>/``.
+All new code must import from the durable facade:
+    from backend.services.artifact_lifecycle_service import ...
+
+Implementation remains here for now; references updated to prefer facade.
 """
 
 from __future__ import annotations
